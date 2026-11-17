@@ -80,13 +80,16 @@ async fn ensure_daemon(cwd: &Path) -> Result<TcpStream, String> {
         .stdout(Stdio::null())
         .stderr(Stdio::null());
 
-    // The daemon has to outlive this tool call, so it gets no console of its own.
+    // The daemon has to outlive this tool call, so it gets no *visible* window — but it must
+    // keep a console. DETACHED_PROCESS gives it none at all, and then every child it spawns
+    // (git, pwsh, cmd) allocates a fresh console, which Windows hands to Windows Terminal: a
+    // tab flashes on the desktop for every command the session runs. CREATE_NO_WINDOW creates
+    // a console with no window, and the children inherit it.
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        const DETACHED_PROCESS: u32 = 0x0000_0008;
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        command.creation_flags(DETACHED_PROCESS | CREATE_NO_WINDOW);
+        command.creation_flags(CREATE_NO_WINDOW);
     }
 
     command
