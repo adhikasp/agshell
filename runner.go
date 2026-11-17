@@ -311,7 +311,9 @@ func textOf(src string, n syntax.Node) string {
 	if s < 0 || e > len(src) || s >= e {
 		return ""
 	}
-	return src[s:e]
+	// Stmt.End() includes the separator; the envelope is an interface, so don't
+	// make it read like `false;` when the command is `false`.
+	return strings.TrimRight(src[s:e], " \t\n;")
 }
 
 func pipeStages(b *syntax.BinaryCmd) []*syntax.Stmt {
