@@ -1,29 +1,25 @@
-//! agshell — a supervised execution shell for coding agents.
-//!
-//! It parses a bash script, then runs it one element at a time so that the
-//! outcome of every command and every pipeline stage survives as data. brush
-//! is the evaluator: words, expansions, builtins, pipelines and redirections
-//! are its job. agshell owns the topology.
-
-mod report;
-mod runner;
+//! agshell CLI.
 
 use std::io::{Read, Write};
 use std::process::ExitCode;
 use std::time::Duration;
 
-use clap::Parser;
+use clap::{Parser, Subcommand};
 
-use report::Report;
-use runner::{Options, Runner, become_subreaper};
+use agshell::report::Report;
+use agshell::session::{Options, Session};
+use agshell::sys::become_subreaper;
 
 /// A supervised execution shell for coding agents.
 #[derive(Debug, Parser)]
 #[command(name = "agshell", version, about, long_about = None)]
 struct Cli {
+    #[command(subcommand)]
+    command: Option<Mode>,
+
     /// Bash script to supervise.
     #[arg(short = 'c', long = "command", value_name = "SCRIPT")]
-    command: Option<String>,
+    script_flag: Option<String>,
 
     /// Bash script to supervise (positional form).
     #[arg(value_name = "SCRIPT")]
@@ -40,54 +36,132 @@ struct Cli {
     /// Captured stdout limit in bytes.
     #[arg(long = "max-stdout", default_value_t = 65536, value_name = "BYTES")]
     max_stdout: usize,
+
+    /// Stop the script at the first failure instead of continuing.
+    #[arg(long)]
+    strict: bool,
+
+    /// Execute `$( )` and backticks ourselves so their status is reported.
+    #[arg(long, alias = "subs")]
+    supervise_substitutions: bool,
+
+    /// Analyse the script without running it.
+    #[arg(long)]
+    check: bool,
+}
+
+#[derive(Debug, Subcommand)]
+enum Mode {
+    /// Serve requests on stdin, one JSON object per line.
+    Serve {
+        /// Per-statement timeout, e.g. 500ms, 30s, 5m. 0 disables it.
+        #[arg(long, default_value = "30s", value_parser = parse_duration, value_name = "DURATION")]
+        timeout: Duration,
+
+        /// Captured stdout limit in bytes.
+        #[arg(long = "max-stdout", default_value_t = 65536, value_name = "BYTES")]
+        max_stdout: usize,
+
+        /// Stop each script at the first failure instead of continuing.
+        #[arg(long)]
+        strict: bool,
+
+        /// Execute `$( )` and backticks ourselves so their status is reported.
+        #[arg(long, alias = "subs")]
+        supervise_substitutions: bool,
+    },
 }
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    // Timeouts kill the process tree, and we need reparented grandchildren
-    // to still be findable when we walk it.
+    // Timeouts kill the process tree, and we need reparented grandchildren to
+    // still be findable when we walk it.
     become_subreaper();
 
     let cli = Cli::parse();
-    let script = match resolve_script(&cli) {
-        Some(s) => s,
-        None => {
-            eprintln!("usage: agshell [-c] '<bash script>' [--timeout 30s] [--human]");
-            return ExitCode::from(2);
-        }
-    };
+
+    if let Some(Mode::Serve {
+        timeout,
+        max_stdout,
+        strict,
+        supervise_substitutions,
+    }) = cli.command
+    {
+        let opts = Options {
+            timeout,
+            max_stdout,
+            strict,
+            supervise_substitutions,
+        };
+        return match agshell::serve::run(opts).await {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("agshell: serve: {e}");
+                ExitCode::from(2)
+            }
+        };
+    }
 
     let opts = Options {
         timeout: cli.timeout,
         max_stdout: cli.max_stdout,
+        strict: cli.strict,
+        supervise_substitutions: cli.supervise_substitutions,
     };
 
-    let runner = match Runner::new(opts).await {
-        Ok(r) => r,
+    let session = match Session::new(opts).await {
+        Ok(session) => session,
         Err(e) => {
             eprintln!("agshell: {e}");
             return ExitCode::from(2);
         }
     };
 
-    let report = runner.run(&script).await;
+    let Some(script) = resolve_script(&cli) else {
+        eprintln!(
+            "usage: agshell [-c] '<bash script>' [--timeout 30s] [--human]\n       agshell serve"
+        );
+        return ExitCode::from(2);
+    };
+
+    if cli.check {
+        let report = session.check(&script);
+        print_json(&report);
+        return ExitCode::SUCCESS;
+    }
+
+    drop(session);
+
+    let mut session = match Session::new(opts).await {
+        Ok(session) => session,
+        Err(e) => {
+            eprintln!("agshell: {e}");
+            return ExitCode::from(2);
+        }
+    };
+
+    let report = session.run(&script).await;
     let code = report.exit;
 
     if cli.human {
         print_human(&script, &report);
     } else {
-        match serde_json::to_string_pretty(&report) {
-            Ok(json) => println!("{json}"),
-            Err(e) => eprintln!("agshell: failed to encode report: {e}"),
-        }
+        print_json(&report);
     }
 
     let _ = std::io::stdout().flush();
     ExitCode::from(u8::try_from(code.clamp(0, 255)).unwrap_or(1))
 }
 
+fn print_json<T: serde::Serialize>(value: &T) {
+    match serde_json::to_string_pretty(value) {
+        Ok(json) => println!("{json}"),
+        Err(e) => eprintln!("agshell: failed to encode report: {e}"),
+    }
+}
+
 fn resolve_script(cli: &Cli) -> Option<String> {
-    if let Some(command) = &cli.command {
+    if let Some(command) = &cli.script_flag {
         return Some(command.clone());
     }
     if !cli.script.is_empty() {
@@ -148,6 +222,9 @@ fn print_human(script: &str, report: &Report) {
         if command.delegated {
             tag.push_str(" delegated");
         }
+        if command.substitution_of.is_some() {
+            tag.push_str(" substitution");
+        }
 
         println!(
             "  #{:<2} {:<34} {:<9} {:>5}ms{}",
@@ -174,6 +251,9 @@ fn print_human(script: &str, report: &Report) {
     }
     if report.opaque_substitution {
         print!(" opaque_substitution");
+    }
+    if report.aborted {
+        print!(" aborted_at={}", report.stopped_at.unwrap_or(0));
     }
     println!();
 

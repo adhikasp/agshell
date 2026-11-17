@@ -53,6 +53,7 @@ fn chain_keeps_hidden_failure() {
     assert_eq!(r["stdout"], "hi\n");
 }
 
+#[cfg(unix)]
 #[test]
 fn pipeline_stages() {
     let r = run("false | head -1");
@@ -69,6 +70,7 @@ fn pipeline_stages() {
     assert_eq!(commands[1]["stage"], 1);
 }
 
+#[cfg(unix)]
 #[test]
 fn pipeline_data_flows() {
     let r = run("printf 'b\\na\\nc\\n' | sort | head -2");
@@ -144,6 +146,7 @@ fn stderr_is_captured() {
 
 /// The rewrite embeds the shell instead of forking one per command, so state
 /// that bash keeps in the shell has to keep working across statements.
+#[cfg(unix)]
 #[test]
 fn shell_state_persists_across_statements() {
     let r = run("x=41; cd /tmp; y=$((x + 1)); echo \"$y in $PWD\"; printf '%s\\n' \"$0\"");
@@ -193,3 +196,4 @@ fn timeout_kills_a_whole_pipeline() {
     assert_eq!(r["class"], "timeout");
     assert_eq!(r["commands"].as_array().unwrap().len(), 2);
 }
+
