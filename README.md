@@ -1,6 +1,6 @@
 # agshell
 
-**Your agent's shell says `exit 0`. Half the time, something failed.**
+**Your agent's shell says `exit 0`. Often, something in the command failed.**
 
 agshell is a drop-in supervised shell for coding agents. It runs the same bash your agent already writes, but reports what *actually happened*: the status of every command in a chain, every stage of a pipeline, and every `$( )`, as typed JSON instead of one exit code.
 
