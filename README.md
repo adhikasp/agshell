@@ -136,11 +136,17 @@ assert_eq!(report.commands[0].status, 1);     // typed, not text-parsed
 ## Try it
 
 ```console
-$ git clone https://github.com/adhikasp/agshell && cd agshell
-$ cargo build --release                       # Rust 1.88+, Linux and Windows
-$ ./target/release/agshell -c 'go test ./... 2>&1 | tail -5'    # JSON envelope
-$ ./target/release/agshell -c 'make' --human --timeout 5m       # readable report
-$ ./target/release/agshell --check -c 'cd /tmp; false | head -1; echo done'
+$ cargo install agshell                       # Rust 1.88+, Linux and Windows
+$ agshell -c 'go test ./... 2>&1 | tail -5'    # JSON envelope
+$ agshell -c 'make' --human --timeout 5m       # readable report
+$ agshell --check -c 'cd /tmp; false | head -1; echo done'
+```
+
+Build from source if you want the Windows `.cmd` fix (see the limits below):
+
+```console
+$ cargo install --git https://github.com/adhikasp/agshell
+$ git clone https://github.com/adhikasp/agshell && cd agshell && cargo build --release
 ```
 
 ### Wire it into your agent
@@ -172,6 +178,7 @@ $ ./target/release/agshell --check -c 'cd /tmp; false | head -1; echo done'
 - Stderr and timing are reported per pipeline, not per stage, because the shell owns the pipe graph.
 - A `$( )` in a pipeline stage (`echo $(cmd) | grep x`) or a background job is not observed and is flagged `opaque_substitution`. Everywhere else, in a lone command, a heredoc, a loop body or a function, it is.
 - `brush`'s Windows support is a preview; timeouts and scripts work, POSIX signals and process groups do not exist there.
+- **Windows installs from crates.io** resolve `.cmd`/`.bat` programs (`npm`, `npx`, `opencode`, ...) with the unpatched `brush-core` resolver, so they fail with `os error 193`. The fix is a pinned `brush` fork, and cargo does not publish `[patch]` sections; use `cargo install --git https://github.com/adhikasp/agshell` until it lands upstream.
 - Next up: an exec observer in `brush-core` for real `argv`, per-stage pids and a policy seam. That is an upstream change.
 
 ## Under the hood
