@@ -95,6 +95,43 @@ fn check_passes_a_clean_script() {
 }
 
 #[test]
+fn check_flags_a_powershell_script_bash_would_expand() {
+    let output = Command::new(BIN)
+        .args([
+            "--check",
+            "-c",
+            r#"pwsh -NoProfile -Command "Get-CimInstance X | Select-Object @{e={$_.Capacity/1GB}}""#,
+        ])
+        .output()
+        .expect("run agshell --check");
+
+    let report: Value = serde_json::from_slice(&output.stdout).expect("check JSON");
+    let kinds: Vec<&str> = report["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["kind"].as_str().unwrap_or(""))
+        .collect();
+
+    assert!(kinds.contains(&"expanded_before_interpreter"), "{report}");
+}
+
+#[test]
+fn check_accepts_a_single_quoted_powershell_script() {
+    let output = Command::new(BIN)
+        .args([
+            "--check",
+            "-c",
+            r#"pwsh -NoProfile -Command 'Get-CimInstance X | Select-Object @{e={$_.Capacity/1GB}}'"#,
+        ])
+        .output()
+        .expect("run agshell --check");
+
+    let report: Value = serde_json::from_slice(&output.stdout).expect("check JSON");
+    assert_eq!(report["ok"], true, "{report}");
+}
+
+#[test]
 fn check_reports_a_parse_error() {
     let output = Command::new(BIN)
         .args(["--check", "-c", "if then"])

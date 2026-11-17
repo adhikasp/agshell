@@ -109,7 +109,7 @@ $ agshell -c 'echo ok; false; echo never' --strict --human
 class=failed exit=1 aborted_at=1         # "never" never ran
 ```
 
-**`--check`: lint before you spend the tool call.** It parses without executing and tells the agent what its own script is about to hide: `dropped_status`, `masked_stage`, `negated_status`, `wont_persist` (a `cd` inside a pipeline subshell), `unquoted_substitution`, `opaque_substitution`.
+**`--check`: lint before you spend the tool call.** It parses without executing and tells the agent what its own script is about to hide: `dropped_status`, `masked_stage`, `negated_status`, `wont_persist` (a `cd` inside a pipeline subshell), `unquoted_substitution`, `opaque_substitution`, and `expanded_before_interpreter` (a `pwsh -Command "…"` whose `$…` this shell expands before PowerShell sees it — with a `hint:` on the failed run for the same reason).
 
 **`serve`: one live shell, with undo.** A JSON-lines protocol over stdin/stdout. State (`cd`, `export`, functions, arrays) persists across calls, because it is one shell and not one process per command.
 

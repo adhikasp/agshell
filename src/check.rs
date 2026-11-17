@@ -126,6 +126,24 @@ fn check_pipeline(
         });
     }
 
+    // A script in another language, quoted for bash to expand before it runs.
+    for command in pipeline.seq.iter() {
+        let rendered = command.to_string();
+        if let Some(hit) = scan::foreign_script_expansion(&rendered) {
+            findings.push(Finding {
+                index,
+                text: hit.word,
+                kind: "expanded_before_interpreter".to_string(),
+                detail: format!(
+                    "bash expands `$…` inside this double-quoted {} script before it runs — `$_` \
+                     becomes the previous command's last argument, `$env:X` empty; single-quote \
+                     the argument and double-quote inside, or pass it with -EncodedCommand",
+                    hit.interpreter
+                ),
+            });
+        }
+    }
+
     // A substitution in a lone command or a compound statement is seen from
     // the inside. The stages of a real pipeline are not traced, so one in a
     // stage stays invisible.

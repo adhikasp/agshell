@@ -9,6 +9,8 @@ use std::sync::OnceLock;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
+use crate::scan;
+
 /// Status recorded for a command that `&&`/`||` prevented from running.
 pub const SKIPPED: i32 = -1;
 
@@ -151,28 +153,57 @@ fn looks_like_cmdlet(name: &str) -> bool {
     POWERSHELL_VERBS.contains(&verb)
 }
 
+/// A PowerShell parse error: the script arrived mangled, not wrong.
+fn powershell_parse_error(stderr: &str) -> bool {
+    [
+        "ParserError",
+        "Unexpected token",
+        "The string is missing the terminator",
+    ]
+    .iter()
+    .any(|marker| stderr.contains(marker))
+}
+
+/// Said when a `pwsh -Command "…"` arrived with its `$…` already expanded by bash.
+const MANGLED_SCRIPT_HINT: &str = "hint: agshell is bash, so it expanded the `$…` inside that \
+     double-quoted -Command argument before pwsh saw the script (`$_` is bash's *last argument of \
+     the previous command*, `$env:X` becomes empty). Single-quote the whole argument and use \
+     PowerShell double quotes inside: pwsh -NoProfile -Command 'Get-Process | Where-Object { \
+     $_.Name -eq \"x\" }' — or pass the script as base64 with -EncodedCommand.\n";
+
 impl Report {
-    /// Turns "command not found: Get-ChildItem" into advice the model can act on.
+    /// Turns "command not found: Get-ChildItem" into advice the model can act on,
+    /// and explains a mangled PowerShell script the same way.
     ///
-    /// Only touches status 127 with a wrong-shell-looking name; everything else is left
-    /// exactly as the command wrote it.
+    /// Only touches status 127 with a wrong-shell-looking name, and a failed pwsh
+    /// whose script bash visibly rewrote; everything else is left exactly as the
+    /// command wrote it.
     pub fn with_hints(&mut self) {
         for command in &mut self.commands {
-            if command.status != 127 {
-                continue;
+            if command.status == 127 {
+                if let Some(name) = missing_program(&command.stderr) {
+                    if looks_like_cmdlet(name) {
+                        command.stderr.push_str(&format!(
+                            "hint: `{name}` is a PowerShell cmdlet, not a bash command. This shell \
+                             is agshell (bash-compatible): run it as `pwsh -NoProfile -Command \
+                             '{name} ...'` (single-quoted, so bash does not expand its `$…`), or \
+                             use the POSIX equivalent (Get-Content=cat, Get-ChildItem=ls, \
+                             Select-Object=head/sed, Test-Path=test -e).\n"
+                        ));
+                    }
+                }
             }
-            let Some(name) = missing_program(&command.stderr) else {
-                continue;
-            };
-            if !looks_like_cmdlet(name) {
-                continue;
+
+            if command.status != 0
+                && !command.timed_out
+                && powershell_parse_error(&command.stderr)
+                && scan::foreign_script_expansion(&command.text).is_some()
+            {
+                if !command.stderr.ends_with('\n') && !command.stderr.is_empty() {
+                    command.stderr.push('\n');
+                }
+                command.stderr.push_str(MANGLED_SCRIPT_HINT);
             }
-            command.stderr.push_str(&format!(
-                "hint: `{name}` is a PowerShell cmdlet, not a bash command. This shell is agshell \
-                 (bash-compatible): run it as `pwsh -NoProfile -Command \"{name} ...\"`, or use the \
-                 POSIX equivalent (Get-Content=cat, Get-ChildItem=ls, Select-Object=head/sed, \
-                 Test-Path=test -e).\n"
-            ));
         }
     }
 
@@ -303,4 +334,54 @@ fn is_zero(v: &usize) -> bool {
 
 fn is_false(v: &bool) -> bool {
     !*v
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn failed_command(text: &str, stderr: &str) -> Report {
+        let mut report = Report::parse_error(String::new(), 0);
+        let mut record = CommandRecord::simple(0, text.to_string(), String::new(), 1, 1);
+        record.stderr = stderr.to_string();
+        report.commands.push(record);
+        report
+    }
+
+    const PARSE_ERROR: &str = "ParserError: \nLine |\n   1 |  .  | Select-Object @{e={\
+                               [math]::Round(agshell. .\n     |  ~\n     | Missing ')' in method call.";
+
+    #[test]
+    fn explains_a_script_bash_expanded() {
+        let mut report = failed_command(
+            r#"pwsh -NoProfile -Command "Get-X | Select-Object @{e={$_.Name}}""#,
+            PARSE_ERROR,
+        );
+        report.with_hints();
+
+        let stderr = &report.commands[0].stderr;
+        assert!(stderr.contains("hint:"), "{stderr}");
+        assert!(stderr.contains("Single-quote"), "{stderr}");
+        assert!(stderr.contains("EncodedCommand"), "{stderr}");
+    }
+
+    #[test]
+    fn leaves_a_genuine_powershell_error_alone() {
+        let mut report = failed_command(r#"pwsh -Command 'Get-X $_.Name'"#, PARSE_ERROR);
+        report.with_hints();
+
+        assert!(!report.commands[0].stderr.contains("hint:"), "{:?}", report.commands[0]);
+    }
+
+    #[test]
+    fn a_mangled_script_outranks_nothing_else() {
+        let mut report = failed_command(
+            r#"pwsh -Command "echo $x""#,
+            "ParserError: The string is missing the terminator: \".",
+        );
+        report.with_hints();
+
+        assert!(report.commands[0].stderr.ends_with('\n'), "hint ends the block");
+        assert!(report.commands[0].stderr.contains("hint:"), "{:?}", report.commands[0]);
+    }
 }
