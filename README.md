@@ -101,8 +101,10 @@ command and per pipeline stage. This one links the shell instead:
 - **Pipelines are pipelines.** The shell runs the pipe graph, so streaming,
   `SIGPIPE` and `head` behave; agshell reads the per-stage statuses back from
   `PIPESTATUS` rather than gluing `os.Pipe` together.
-- **Text is exact.** Each record's `text` is the source you wrote, sliced by
-  statement boundaries — not a re-render of the parse tree.
+- **Text is exact where it matters.** A statement's `text` is the source you wrote,
+  sliced at statement boundaries. Individual pipeline stages are rendered from the
+  parse tree — same words, normalized spacing — because brush-parser's per-command
+  spans stop short of redirects.
 - **One parser for topology and execution.** No more "parse with A, evaluate with
   B" split brain.
 
