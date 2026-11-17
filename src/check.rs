@@ -34,7 +34,7 @@ pub struct CheckReport {
 
 /// Analyses `program`, parsed from `src`.
 #[must_use]
-pub fn check_program(program: &Program, _src: &str, supervise_substitutions: bool) -> CheckReport {
+pub fn check_program(program: &Program, _src: &str) -> CheckReport {
     let mut findings = Vec::new();
     let mut index = 0;
 
@@ -57,16 +57,8 @@ pub fn check_program(program: &Program, _src: &str, supervise_substitutions: boo
                 });
             }
 
-            check_list(list, index, &text, supervise_substitutions, &mut findings);
+            check_list(list, index, &text, &mut findings);
 
-            if scan::has_heredoc(&text) && has_substitution(&text) && !supervise_substitutions {
-                findings.push(Finding {
-                    index,
-                    text: text.clone(),
-                    kind: "opaque_substitution".to_string(),
-                    detail: "a heredoc body hides the substitution from supervision".to_string(),
-                });
-            }
 
             index += 1;
         }
@@ -83,11 +75,10 @@ fn check_list(
     list: &AndOrList,
     index: usize,
     text: &str,
-    supervise_substitutions: bool,
     findings: &mut Vec<Finding>,
 ) {
     for (_, pipeline) in list.iter() {
-        check_pipeline(pipeline, index, text, supervise_substitutions, findings);
+        check_pipeline(pipeline, index, text, findings);
     }
 }
 
@@ -95,7 +86,6 @@ fn check_pipeline(
     pipeline: &Pipeline,
     index: usize,
     text: &str,
-    supervise_substitutions: bool,
     findings: &mut Vec<Finding>,
 ) {
     let stages = pipeline.seq.len();
@@ -136,25 +126,28 @@ fn check_pipeline(
         });
     }
 
-    if !supervise_substitutions && has_substitution(text) {
+    // A substitution in a lone command or a compound statement is seen from
+    // the inside. The stages of a real pipeline are not traced, so one in a
+    // stage stays invisible.
+    let rendered = pipeline.to_string();
+    if stages > 1 && has_substitution(&rendered) {
         findings.push(Finding {
             index,
-            text: text.to_string(),
+            text: rendered.clone(),
             kind: "opaque_substitution".to_string(),
-            detail: "a failure inside `$( )` is invisible to the exit status".to_string(),
+            detail: "a failure inside `$( )` in a pipeline stage is invisible to the exit status"
+                .to_string(),
         });
     }
 
-    if supervise_substitutions {
-        for sub in scan::substitutions(text) {
-            if !sub.quoted {
-                findings.push(Finding {
-                    index,
-                    text: format!("$({})", sub.inner),
-                    kind: "unquoted_substitution".to_string(),
-                    detail: "unquoted substitution output is word-split and globbed".to_string(),
-                });
-            }
+    for sub in scan::substitutions(&rendered) {
+        if !sub.quoted {
+            findings.push(Finding {
+                index,
+                text: format!("$({})", sub.inner),
+                kind: "unquoted_substitution".to_string(),
+                detail: "unquoted substitution output is word-split and globbed".to_string(),
+            });
         }
     }
 }
@@ -181,7 +174,7 @@ fn has_substitution(text: &str) -> bool {
 pub fn check_list_only(list: &CompoundList, index: usize, text: &str) -> Vec<Finding> {
     let mut findings = Vec::new();
     for item in &list.0 {
-        check_list(&item.0, index, text, false, &mut findings);
+        check_list(&item.0, index, text, &mut findings);
     }
     findings
 }

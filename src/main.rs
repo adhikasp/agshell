@@ -41,8 +41,9 @@ struct Cli {
     #[arg(long)]
     strict: bool,
 
-    /// Execute `$( )` and backticks ourselves so their status is reported.
-    #[arg(long, alias = "subs")]
+    /// Accepted for compatibility: substitutions are always observed now.
+    #[arg(long, alias = "subs", hide = true)]
+    #[allow(dead_code)]
     supervise_substitutions: bool,
 
     /// Analyse the script without running it.
@@ -66,8 +67,9 @@ enum Mode {
         #[arg(long)]
         strict: bool,
 
-        /// Execute `$( )` and backticks ourselves so their status is reported.
-        #[arg(long, alias = "subs")]
+        /// Accepted for compatibility: substitutions are always observed now.
+        #[arg(long, alias = "subs", hide = true)]
+        #[allow(dead_code)]
         supervise_substitutions: bool,
     },
 }
@@ -84,14 +86,13 @@ async fn main() -> ExitCode {
         timeout,
         max_stdout,
         strict,
-        supervise_substitutions,
+        supervise_substitutions: _,
     }) = cli.command
     {
         let opts = Options {
             timeout,
             max_stdout,
             strict,
-            supervise_substitutions,
         };
         return match agshell::serve::run(opts).await {
             Ok(()) => ExitCode::SUCCESS,
@@ -106,7 +107,6 @@ async fn main() -> ExitCode {
         timeout: cli.timeout,
         max_stdout: cli.max_stdout,
         strict: cli.strict,
-        supervise_substitutions: cli.supervise_substitutions,
     };
 
     let session = match Session::new(opts).await {

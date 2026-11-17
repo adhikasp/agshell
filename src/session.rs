@@ -16,7 +16,6 @@ use std::time::{Duration, Instant};
 
 use brush_builtins::{BuiltinSet, ShellBuilderExt};
 use brush_core::openfiles::OpenFile;
-use brush_core::variables::ShellVariable;
 use brush_core::{ExecutionControlFlow, ProcessGroupPolicy, Shell};
 use brush_parser::ast::{
     AndOr, AndOrList, Command, CompoundList, CompoundListItem, Pipeline, Program,
@@ -28,21 +27,12 @@ use crate::check::{CheckReport, check_program};
 use crate::report::{
     CommandRecord, Report, SKIPPED, STDERR_CAP, bin_of, classify, hidden, looks_noisy,
 };
-use crate::scan;
 use crate::trace;
-
-/// How deep substitution supervision may recurse before it leaves the shell to
-/// it.
-const MAX_SUBSTITUTION_DEPTH: usize = 4;
 
 /// How many ordinary commands seen inside a statement the envelope keeps. An
 /// unhandled failure is always kept; a loop of 5,000 iterations is not 5,000
 /// records.
 const MAX_INNER: usize = 200;
-
-/// Cap on the output of a supervised substitution, which must be kept whole to
-/// be usable as a value.
-const SUBSTITUTION_CAP: usize = 8 * 1024 * 1024;
 
 /// Knobs a caller sets.
 #[derive(Debug, Clone, Copy)]
@@ -53,8 +43,6 @@ pub struct Options {
     pub max_stdout: usize,
     /// Stop the script at the first failure instead of continuing.
     pub strict: bool,
-    /// Execute `$( )` and backticks ourselves so their status is reported.
-    pub supervise_substitutions: bool,
 }
 
 impl Default for Options {
@@ -63,7 +51,6 @@ impl Default for Options {
             timeout: Duration::from_secs(30),
             max_stdout: 65536,
             strict: false,
-            supervise_substitutions: false,
         }
     }
 }
@@ -126,12 +113,12 @@ impl Session {
     /// Executes `src` and returns the envelope. Shell state carries into the
     /// next call.
     pub async fn run(&mut self, src: &str) -> Report {
-        execute(&mut self.shell, self.opts, 0, src, &NoopObserver).await
+        execute(&mut self.shell, self.opts, src, &NoopObserver).await
     }
 
     /// Same as [`Session::run`], reporting progress to `observer`.
     pub async fn run_with(&mut self, src: &str, observer: &dyn Observer) -> Report {
-        execute(&mut self.shell, self.opts, 0, src, observer).await
+        execute(&mut self.shell, self.opts, src, observer).await
     }
 
     /// Runs several scripts on isolated forks and returns every envelope.
@@ -152,7 +139,7 @@ impl Session {
     #[must_use]
     pub fn check(&self, src: &str) -> CheckReport {
         match self.shell.parse_string(src.to_string()) {
-            Ok(program) => check_program(&program, src, self.opts.supervise_substitutions),
+            Ok(program) => check_program(&program, src),
             Err(err) => CheckReport {
                 ok: false,
                 findings: Vec::new(),
@@ -167,7 +154,7 @@ impl Session {
             timeout: timeout.unwrap_or(self.opts.timeout),
             ..self.opts
         };
-        execute(&mut self.shell, opts, 0, src, &NoopObserver).await
+        execute(&mut self.shell, opts, src, &NoopObserver).await
     }
 
     /// What the shell currently holds, for a harness that wants to show state.
@@ -197,7 +184,6 @@ pub struct StateSummary {
 async fn execute(
     shell: &mut Shell,
     opts: Options,
-    depth: usize,
     src: &str,
     observer: &dyn Observer,
 ) -> Report {
@@ -212,7 +198,6 @@ async fn execute(
     let mut run = Run {
         shell,
         opts,
-        depth,
         observer,
         sink: Sink {
             buf: String::new(),
@@ -324,6 +309,15 @@ impl Sink {
     }
 }
 
+/// Why a statement is watched from the inside.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Inside {
+    /// A function, `eval` or `source`: it runs a body.
+    Body,
+    /// Words with `$( )`: it runs commands to build its arguments.
+    Substitution,
+}
+
 /// What one executed statement did.
 struct Outcome {
     status: i32,
@@ -348,7 +342,6 @@ impl Outcome {
 struct Run<'a, 'o> {
     shell: &'a mut Shell,
     opts: Options,
-    depth: usize,
     observer: &'o dyn Observer,
     sink: Sink,
     commands: Vec<CommandRecord>,
@@ -437,7 +430,7 @@ impl Run<'_, '_> {
         {
             stages[0] = text.to_string();
         }
-        if stages.len() > 1 || compound {
+        if !traced && (stages.len() > 1 || compound) {
             self.mark_opaque(&stages.join(" "));
         }
         if pipeline.bang
@@ -490,43 +483,31 @@ impl Run<'_, '_> {
             self.emit(record);
         }
 
-        self.link_inner(nested);
+        self.link_inner(nested, false);
         out
     }
 
-    /// A single simple command, optionally with its substitutions supervised.
+    /// A single simple command. One that runs more than itself (a function, an
+    /// `eval`, a `source`, or words with `$( )`) is watched from the inside.
     async fn run_simple(&mut self, pipeline: &Pipeline, statement: Option<&str>) -> Outcome {
         let command = &pipeline.seq[0];
         let original = statement.map_or_else(|| command.to_string(), ToString::to_string);
+        let to_exec = program_of_pipeline(pipeline.clone());
 
-        let mut nested: Vec<usize> = Vec::new();
-        let mut to_exec = program_of_pipeline(pipeline.clone());
-
-        if self.opts.supervise_substitutions
-            && self.depth < MAX_SUBSTITUTION_DEPTH
-            && let Some((spliced, inner_records)) = self.supervise_substitutions(&original).await
-            && let Ok(program) = self.shell.parse_string(spliced)
-        {
-            to_exec = program;
-            nested = inner_records;
-        }
-        self.mark_opaque(&original);
-
-        // A function call, `eval` or `source` runs more commands than the one
-        // we can see: watch it from the inside.
-        let (out, inner) = if self.runs_inner_commands(&original) {
+        let reason = self.inner_reason(&original);
+        let (out, mut inner) = if reason.is_some() {
             self.exec_traced(to_exec, &original).await
         } else {
             (self.exec(to_exec).await, Vec::new())
         };
-        // The shell also announces the call itself; that is the record below.
-        let mut inner = inner;
-        if inner.first().is_some_and(|first| {
-            first.text.split_whitespace().next() == Some(bin_of(&original).as_str())
-        }) {
-            inner.remove(0);
+
+        // The shell also announces the command itself, in the base context,
+        // after its words were expanded: that one is the record below.
+        if let Some(at) = inner.iter().position(|i| !i.subshell && !i.function) {
+            inner.remove(at);
         }
-        let nested_inner = self.emit_inner(inner);
+        let nested = self.emit_inner(inner);
+
         let mut record = CommandRecord::simple(
             self.commands.len(),
             original.clone(),
@@ -536,24 +517,25 @@ impl Run<'_, '_> {
         );
         record.timed_out = out.timed_out;
         record.stderr = out.stderr.clone();
-        let outer = record.i;
         self.emit(record);
 
-        for index in nested {
-            if let Some(rec) = self.commands.get_mut(index) {
-                rec.substitution_of = Some(outer);
-            }
-        }
-        self.link_inner(nested_inner);
-
+        // With nothing but `$( )` in its words, everything seen inside was a
+        // substitution.
+        self.link_inner(nested, reason == Some(Inside::Substitution));
         out
     }
 
-    /// True when the command's first word runs commands we cannot otherwise
-    /// see: a defined function, `eval`, `source` or `.`.
-    fn runs_inner_commands(&self, text: &str) -> bool {
+    /// Why a simple command is worth watching from the inside, if it is.
+    fn inner_reason(&self, text: &str) -> Option<Inside> {
         let name = bin_of(text);
-        matches!(name.as_str(), "eval" | "source" | ".") || self.shell.funcs().get(&name).is_some()
+        if matches!(name.as_str(), "eval" | "source" | ".") || self.shell.funcs().get(&name).is_some()
+        {
+            Some(Inside::Body)
+        } else if text.contains("$(") || text.contains('`') {
+            Some(Inside::Substitution)
+        } else {
+            None
+        }
     }
 
     /// Runs `program` with the shell's `DEBUG`/`ERR` traps pointed at us, and
@@ -629,91 +611,18 @@ impl Run<'_, '_> {
         start..self.commands.len()
     }
 
-    fn link_inner(&mut self, range: std::ops::Range<usize>) {
+    fn link_inner(&mut self, range: std::ops::Range<usize>, substitution: bool) {
         let parent = self.commands.len().saturating_sub(1);
         for i in range {
             if i != parent
                 && let Some(rec) = self.commands.get_mut(i)
             {
                 rec.inside = Some(parent);
+                if substitution {
+                    rec.substitution_of = Some(parent);
+                }
             }
         }
-    }
-
-    /// Executes each `$( )`/backtick in `text` as its own supervised unit and
-    /// rewrites the text to read their results from variables.
-    ///
-    /// The variable holds the output verbatim and the source keeps the
-    /// substitution's quoting, so word splitting and globbing still follow the
-    /// user's quoting. Values are set through the API, never spliced as text.
-    async fn supervise_substitutions(&mut self, text: &str) -> Option<(String, Vec<usize>)> {
-        if scan::has_heredoc(text) {
-            return None;
-        }
-
-        let subs = scan::substitutions(text);
-        if subs.is_empty() {
-            return None;
-        }
-
-        let mut names: Vec<String> = Vec::new();
-        let mut records: Vec<usize> = Vec::new();
-
-        for (n, sub) in subs.iter().enumerate() {
-            let name = format!("__agshell_sub_{}_{}", self.commands.len(), n);
-            let mut fork = self.shell.clone();
-            let opts = Options {
-                max_stdout: SUBSTITUTION_CAP,
-                ..self.opts
-            };
-            // Boxed: this is recursion through `execute`.
-            let report = Box::pin(execute(
-                &mut fork,
-                opts,
-                self.depth + 1,
-                &sub.inner,
-                &NoopObserver,
-            ))
-            .await;
-
-            let value = report.stdout.trim_end_matches('\n').to_string();
-            let stderr = report
-                .commands
-                .iter()
-                .map(|c| c.stderr.as_str())
-                .filter(|s| !s.is_empty())
-                .collect::<Vec<_>>()
-                .join("\n");
-
-            let _ = self
-                .shell
-                .set_env_global(&name, ShellVariable::new(value.clone()));
-
-            let mut record = CommandRecord::simple(
-                self.commands.len(),
-                format!("$({})", sub.inner),
-                bin_of(&sub.inner),
-                report.exit,
-                report.duration_ms,
-            );
-            record.stderr = stderr;
-            let index = record.i;
-            self.emit(record);
-            records.push(index);
-            names.push(name);
-        }
-
-        // Splice from the end so earlier offsets stay valid.
-        let mut chars: Vec<char> = text.chars().collect();
-        for (sub, name) in subs.iter().zip(names.iter()).rev() {
-            if sub.end > chars.len() {
-                continue;
-            }
-            let replacement: Vec<char> = format!("${{{name}}}").chars().collect();
-            chars.splice(sub.start..sub.end, replacement);
-        }
-
-        Some((chars.into_iter().collect(), records))
     }
 
     // ------------------------------------------------------------ execution
@@ -835,14 +744,10 @@ impl Run<'_, '_> {
         }
     }
 
-    /// Records that some substitution in `text` was executed by the shell, so
-    /// its failure is invisible.
+    /// Records that some substitution in `text` ran without being watched, so
+    /// its failure is invisible: it sits in a pipeline stage or a background
+    /// job.
     fn mark_opaque(&mut self, text: &str) {
-        if self.opts.supervise_substitutions && !scan::has_heredoc(text) {
-            // Supervised: only substitutions outside the supervised statement
-            // shape remain opaque, and those are handled by the callers.
-            return;
-        }
         if text.contains("$(") || text.contains('`') {
             self.opaque = true;
         }

@@ -106,31 +106,27 @@ fn check_reports_a_parse_error() {
 }
 
 #[test]
-fn substitutions_are_supervised() {
-    let report = run_with(
-        "x=$(echo hi); printf '[%s]' \"$x\"",
-        &["--supervise-substitutions"],
-    )
-    .0;
+fn substitutions_are_observed_without_a_flag() {
+    let report = run_with("x=$(echo hi); printf '[%s]' \"$x\"", &[]).0;
 
     assert_eq!(report["class"], "ok", "{report}");
     assert_eq!(report["stdout"], "[hi]");
     assert!(
         !report["opaque_substitution"].as_bool().unwrap_or(false),
-        "the substitution was supervised"
+        "the substitution was observed"
     );
 
     let substitution = records(&report)
         .iter()
         .find(|c| c["substitution_of"].is_number())
         .expect("a substitution record");
-    assert_eq!(substitution["text"], "$(echo hi)");
+    assert_eq!(substitution["text"], "echo hi");
     assert_eq!(substitution["status"], 0);
 }
 
 #[test]
 fn a_failing_substitution_reaches_the_class() {
-    let (report, _) = run_with("echo $(false) done", &["--supervise-substitutions"]);
+    let (report, _) = run_with("echo $(false) done", &[]);
 
     assert_eq!(report["class"], "substitution_failed", "{report}");
     assert_eq!(report["exit"], 0, "bash-compatible: the echo succeeded");
@@ -143,29 +139,45 @@ fn a_failing_substitution_reaches_the_class() {
         "{report}"
     );
     assert_eq!(
-        report["stdout"], "done\n",
+        report["stdout"], "done
+",
         "an empty substitution yields no field"
     );
 }
 
 #[test]
-fn quoting_survives_substitution_supervision() {
-    let report = run_with(
-        "printf '[%s]\\n' $(printf 'a b')",
-        &["--supervise-substitutions"],
-    )
-    .0;
+fn the_old_flag_is_still_accepted() {
+    let (report, _) = run_with("echo $(false) done", &["--supervise-substitutions"]);
+    assert_eq!(report["class"], "substitution_failed", "{report}");
+}
+
+#[test]
+fn quoting_is_the_shells_own() {
+    let report = run_with("printf '[%s]\n' $(printf 'a b')", &[]).0;
 
     // Unquoted output is split, as bash would.
-    assert_eq!(report["stdout"], "[a]\n[b]\n", "{report}");
+    assert_eq!(report["stdout"], "[a]
+[b]
+", "{report}");
 }
 
 #[cfg(unix)]
 #[test]
-fn heredocs_stay_opaque() {
-    let report = run_with("cat <<EOF\n$(echo hi)\nEOF", &["--supervise-substitutions"]).0;
+fn heredoc_substitutions_are_observed_too() {
+    let report = run_with("cat <<EOF
+$(false)
+EOF", &[]).0;
+    assert_eq!(report["class"], "substitution_failed", "{report}");
+    assert!(
+        !report["opaque_substitution"].as_bool().unwrap_or(false),
+        "{report}"
+    );
+}
+
+#[test]
+fn a_substitution_in_a_pipeline_stage_is_still_opaque() {
+    let report = run_with("echo $(false) | cat", &[]).0;
     assert_eq!(report["opaque_substitution"], true, "{report}");
-    assert_eq!(report["stdout"], "hi\n");
 }
 
 /// A harness-shaped run: state persists, snapshots rewind it, branches are

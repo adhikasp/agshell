@@ -120,9 +120,16 @@ fn ok_noisy() {
 }
 
 #[test]
-fn substitution_is_marked() {
-    let r = run("echo $(false) done");
+fn a_substitution_in_a_pipeline_stage_is_marked_opaque() {
+    let r = run("echo $(false) | cat");
     assert_eq!(r["opaque_substitution"], true);
+}
+
+#[test]
+fn a_substitution_in_a_simple_command_is_not() {
+    let r = run("echo $(false) done");
+    assert!(!r["opaque_substitution"].as_bool().unwrap_or(false), "{r}");
+    assert_eq!(r["class"], "substitution_failed");
 }
 
 #[test]

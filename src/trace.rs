@@ -80,6 +80,10 @@ pub struct Inner {
     pub unhandled: bool,
     /// No later command and no failure event: `status` is assumed, not seen.
     pub inferred: bool,
+    /// Ran in a subshell, which is where `$( )` and `( )` commands run.
+    pub subshell: bool,
+    /// Ran inside a function body.
+    pub function: bool,
 }
 
 struct Probe;
@@ -231,12 +235,16 @@ fn interpret(events: &[Event], ambiguous: bool) -> Vec<Inner> {
                     status: 0,
                     unhandled: false,
                     inferred: true,
+                    subshell: e.subshell,
+                    function: e.function,
                 });
                 out.push(Inner {
                     text: format!("(failure at or after: {})", e.text),
                     status: n.status,
                     unhandled: n.status != 0,
                     inferred: false,
+                    subshell: e.subshell,
+                    function: e.function,
                 });
                 continue;
             }
@@ -255,6 +263,8 @@ fn interpret(events: &[Event], ambiguous: bool) -> Vec<Inner> {
             status,
             unhandled,
             inferred,
+            subshell: e.subshell,
+            function: e.function,
         });
     }
     out

@@ -147,12 +147,6 @@ fn find_paren_end(chars: &[char], from: usize) -> Option<usize> {
     None
 }
 
-/// True if the source contains a heredoc, whose body this scanner cannot
-/// safely read.
-pub fn has_heredoc(src: &str) -> bool {
-    src.contains("<<")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
