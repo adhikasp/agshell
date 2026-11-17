@@ -25,8 +25,8 @@ struct Cli {
     #[arg(value_name = "SCRIPT")]
     script: Vec<String>,
 
-    /// Per-statement timeout, e.g. 500ms, 30s, 5m. 0 disables it.
-    #[arg(long, default_value = "30s", value_parser = parse_duration, value_name = "DURATION")]
+    /// Per-statement timeout, e.g. 500ms, 10m, 1h. 0 disables it.
+    #[arg(long, default_value = "10m", value_parser = parse_duration, value_name = "DURATION")]
     timeout: Duration,
 
     /// Print a report instead of the JSON envelope.
@@ -55,8 +55,8 @@ struct Cli {
 enum Mode {
     /// Serve requests on stdin, one JSON object per line.
     Serve {
-        /// Per-statement timeout, e.g. 500ms, 30s, 5m. 0 disables it.
-        #[arg(long, default_value = "30s", value_parser = parse_duration, value_name = "DURATION")]
+        /// Per-statement timeout, e.g. 500ms, 10m, 1h. 0 disables it.
+        #[arg(long, default_value = "10m", value_parser = parse_duration, value_name = "DURATION")]
         timeout: Duration,
 
         /// Captured stdout limit in bytes.
@@ -130,7 +130,7 @@ async fn main() -> ExitCode {
 
     let Some(script) = resolve_script(&cli) else {
         eprintln!(
-            "usage: agshell [-c] '<bash script>' [--timeout 30s] [--human]\n       agshell serve"
+            "usage: agshell [-c] '<bash script>' [--timeout 10m] [--human]\n       agshell serve"
         );
         return ExitCode::from(2);
     };

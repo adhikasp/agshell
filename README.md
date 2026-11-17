@@ -126,7 +126,7 @@ $ agshell serve
 - **Branches** run each script on an isolated fork. A branch's `cd` or `export` cannot leak into the session or another branch.
 - **20 runs in 8 ms**, against about 3.9 ms of startup each if you spawn a shell per call. Builtins cost ~0.1 ms.
 
-**Timeouts that actually kill things.** A timeout takes down the entire process tree (subshells, nested `bash -c`, loops, pipelines), verified with zero leftovers. Linux uses subreaper plus a `/proc` walk; Windows uses a Toolhelp32 snapshot plus `TerminateProcess`.
+**Timeouts that actually kill things.** The default is **10 m per statement** (`--timeout` overrides it, `0` disables it). A timeout takes down the entire process tree (subshells, nested `bash -c`, loops, pipelines), verified with zero leftovers. Linux uses subreaper plus a `/proc` walk; Windows uses a Toolhelp32 snapshot plus `TerminateProcess`.
 
 **It's a library too.**
 

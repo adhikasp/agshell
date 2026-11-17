@@ -48,7 +48,7 @@ pub struct Options {
 impl Default for Options {
     fn default() -> Self {
         Self {
-            timeout: Duration::from_secs(30),
+            timeout: Duration::from_secs(600),
             max_stdout: 65536,
             strict: false,
         }
