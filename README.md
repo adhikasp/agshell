@@ -146,11 +146,11 @@ $ agshell -c 'make' --human --timeout 5m       # readable report
 $ agshell --check -c 'cd /tmp; false | head -1; echo done'
 ```
 
-Build from source if you want the Windows `.cmd` fix (see the limits below):
+On Windows, install from git so the pinned `brush` fork carrying the `.cmd` exec fix is applied
+(see the limits below). Cargo does the build; there is nothing to clone by hand:
 
 ```console
-$ cargo install --git https://github.com/adhikasp/agshell
-$ git clone https://github.com/adhikasp/agshell && cd agshell && cargo build --release
+$ cargo install --git https://github.com/adhikasp/agshell --locked
 ```
 
 ### Wire it into your agent
