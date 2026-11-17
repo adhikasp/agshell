@@ -1,6 +1,6 @@
 [package]
 name = "agshell"
-version = "0.5.1"
+version = "0.5.2"
 edition = "2024"
 rust-version = "1.88"
 description = "A supervised execution shell for coding agents: per-command and per-stage exit status instead of one exit code per command string."
