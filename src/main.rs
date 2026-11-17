@@ -225,6 +225,12 @@ fn print_human(script: &str, report: &Report) {
         if command.substitution_of.is_some() {
             tag.push_str(" substitution");
         }
+        if let Some(parent) = command.inside {
+            tag.push_str(&format!(" in #{parent}"));
+        }
+        if command.inferred {
+            tag.push_str(" inferred");
+        }
 
         println!(
             "  #{:<2} {:<34} {:<9} {:>5}ms{}",
@@ -248,6 +254,9 @@ fn print_human(script: &str, report: &Report) {
     }
     if report.stdout_truncated {
         print!(" stdout_truncated");
+    }
+    if report.inner_omitted > 0 {
+        print!(" inner_omitted={}", report.inner_omitted);
     }
     if report.opaque_substitution {
         print!(" opaque_substitution");

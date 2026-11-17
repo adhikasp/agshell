@@ -29,10 +29,16 @@ use crate::report::{
     CommandRecord, Report, SKIPPED, STDERR_CAP, bin_of, classify, hidden, looks_noisy,
 };
 use crate::scan;
+use crate::trace;
 
 /// How deep substitution supervision may recurse before it leaves the shell to
 /// it.
 const MAX_SUBSTITUTION_DEPTH: usize = 4;
+
+/// How many ordinary commands seen inside a statement the envelope keeps. An
+/// unhandled failure is always kept; a loop of 5,000 iterations is not 5,000
+/// records.
+const MAX_INNER: usize = 200;
 
 /// Cap on the output of a supervised substitution, which must be kept whole to
 /// be usable as a value.
@@ -220,6 +226,7 @@ async fn execute(
         aborted: false,
         stopped_at: None,
         abort_exit: None,
+        inner_omitted: 0,
     };
 
     let mut exit = 0;
@@ -287,6 +294,7 @@ async fn execute(
         opaque_substitution: run.opaque,
         aborted: run.aborted,
         stopped_at: run.stopped_at,
+        inner_omitted: run.inner_omitted,
         commands: run.commands,
         error: run.error,
     }
@@ -350,6 +358,7 @@ struct Run<'a, 'o> {
     aborted: bool,
     stopped_at: Option<usize>,
     abort_exit: Option<i32>,
+    inner_omitted: usize,
 }
 
 impl Run<'_, '_> {
@@ -406,8 +415,21 @@ impl Run<'_, '_> {
         }
 
         // Everything that is genuinely a pipeline, negated, timed, or built
-        // from compound commands: let the shell run it, then attribute.
-        let out = self.exec(program_of_pipeline(pipeline.clone())).await;
+        // from compound commands: let the shell run it, then attribute. A
+        // compound command is watched from the inside through the shell's traps.
+        //
+        // Only a single compound command is traced: the trap handlers run
+        // pipelines of their own, which would overwrite the `PIPESTATUS` the
+        // stages of a real pipeline are read back from.
+        let traced = compound && pipeline.seq.len() == 1;
+        let (out, inner) = if traced {
+            let text = statement.map_or_else(|| pipeline.to_string(), str::to_string);
+            self.exec_traced(program_of_pipeline(pipeline.clone()), &text)
+                .await
+        } else {
+            (self.exec(program_of_pipeline(pipeline.clone())).await, Vec::new())
+        };
+        let nested = self.emit_inner(inner);
 
         let mut stages: Vec<String> = pipeline.seq.iter().map(ToString::to_string).collect();
         if stages.len() == 1
@@ -434,7 +456,9 @@ impl Run<'_, '_> {
         let negated_single = pipeline.bang && stages.len() == 1;
 
         for (stage, text) in stages.into_iter().enumerate() {
-            let status = if attributed {
+            let status = if traced {
+                out.status
+            } else if attributed {
                 // `! cmd` reports the negated status, not PIPESTATUS[0].
                 if negated_single {
                     out.status
@@ -466,6 +490,7 @@ impl Run<'_, '_> {
             self.emit(record);
         }
 
+        self.link_inner(nested);
         out
     }
 
@@ -487,7 +512,21 @@ impl Run<'_, '_> {
         }
         self.mark_opaque(&original);
 
-        let out = self.exec(to_exec).await;
+        // A function call, `eval` or `source` runs more commands than the one
+        // we can see: watch it from the inside.
+        let (out, inner) = if self.runs_inner_commands(&original) {
+            self.exec_traced(to_exec, &original).await
+        } else {
+            (self.exec(to_exec).await, Vec::new())
+        };
+        // The shell also announces the call itself; that is the record below.
+        let mut inner = inner;
+        if inner.first().is_some_and(|first| {
+            first.text.split_whitespace().next() == Some(bin_of(&original).as_str())
+        }) {
+            inner.remove(0);
+        }
+        let nested_inner = self.emit_inner(inner);
         let mut record = CommandRecord::simple(
             self.commands.len(),
             original.clone(),
@@ -505,8 +544,100 @@ impl Run<'_, '_> {
                 rec.substitution_of = Some(outer);
             }
         }
+        self.link_inner(nested_inner);
 
         out
+    }
+
+    /// True when the command's first word runs commands we cannot otherwise
+    /// see: a defined function, `eval`, `source` or `.`.
+    fn runs_inner_commands(&self, text: &str) -> bool {
+        let name = bin_of(text);
+        matches!(name.as_str(), "eval" | "source" | ".") || self.shell.funcs().get(&name).is_some()
+    }
+
+    /// Runs `program` with the shell's `DEBUG`/`ERR` traps pointed at us, and
+    /// returns what the shell reported running inside it.
+    async fn exec_traced(&mut self, program: Program, text: &str) -> (Outcome, Vec<trace::Inner>) {
+        let ambiguous = self.has_silent_commands(text);
+        let installed = trace::install(self.shell);
+        let out = self.exec(program).await;
+        let inner = trace::finish(self.shell, installed, ambiguous);
+        (out, inner)
+    }
+
+    /// Whether `text`, or a function it calls, holds a standalone `[[ ]]` or
+    /// `(( ))`. `source` runs a file we have not read, so it counts too.
+    fn has_silent_commands(&self, text: &str) -> bool {
+        use std::collections::HashSet;
+
+        if text.split_whitespace().any(|w| w == "source" || w == ".") {
+            return true;
+        }
+        let mut tainted: HashSet<String> = HashSet::new();
+        let bodies: Vec<(String, String)> = self
+            .shell
+            .funcs()
+            .iter()
+            .map(|(name, f)| (name.clone(), f.definition().to_string()))
+            .collect();
+        // A function is tainted if its body is, or if it calls one that is.
+        loop {
+            let before = tainted.len();
+            for (name, body) in &bodies {
+                if !tainted.contains(name)
+                    && (trace::has_silent_commands(body)
+                        || tainted.iter().any(|t| mentions(body, t)))
+                {
+                    tainted.insert(name.clone());
+                }
+            }
+            if tainted.len() == before {
+                break;
+            }
+        }
+        trace::has_silent_commands(text) || tainted.iter().any(|t| mentions(text, t))
+    }
+
+    /// Records the commands seen inside a statement. They ran before the
+    /// statement finished, so they come first; [`Self::link_inner`] points them
+    /// at it afterwards.
+    fn emit_inner(&mut self, inner: Vec<trace::Inner>) -> std::ops::Range<usize> {
+        let start = self.commands.len();
+        let mut kept = 0usize;
+        for item in inner {
+            if !item.unhandled {
+                kept += 1;
+                if kept > MAX_INNER {
+                    self.inner_omitted += 1;
+                    continue;
+                }
+            }
+            let mut record = CommandRecord::simple(
+                self.commands.len(),
+                item.text.clone(),
+                bin_of(&item.text),
+                item.status,
+                0,
+            );
+            record.inferred = item.inferred;
+            // A non-zero status bash did not raise ERR for was consumed by a
+            // condition, `!` or `||`: expected, not hidden.
+            record.handled = item.status != 0 && !item.unhandled;
+            self.emit(record);
+        }
+        start..self.commands.len()
+    }
+
+    fn link_inner(&mut self, range: std::ops::Range<usize>) {
+        let parent = self.commands.len().saturating_sub(1);
+        for i in range {
+            if i != parent
+                && let Some(rec) = self.commands.get_mut(i)
+            {
+                rec.inside = Some(parent);
+            }
+        }
     }
 
     /// Executes each `$( )`/backtick in `text` as its own supervised unit and
@@ -741,13 +872,26 @@ impl Run<'_, '_> {
                 record.stage.unwrap_or(0) < last
             });
 
-            if record.status != 0 && (is_earlier_stage || record.substitution_of.is_some()) {
+            // A failure inside a loop body, branch or function that bash did
+            // not consider handled. The statement ran whole, so it finishes;
+            // the script stops after it.
+            let failed_inside = record.inside.is_some() && !record.handled;
+
+            if record.status != 0
+                && (is_earlier_stage || record.substitution_of.is_some() || failed_inside)
+            {
                 return Some((record.i, record.status));
             }
         }
 
         None
     }
+}
+
+/// True if `name` appears in `text` as a whole word.
+fn mentions(text: &str, name: &str) -> bool {
+    text.split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '-' || c == '.'))
+        .any(|w| w == name)
 }
 
 /// Reconstructs each top-level statement's original source text.

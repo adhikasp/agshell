@@ -16,9 +16,9 @@ pub const SKIPPED: i32 = -1;
 pub const STDERR_CAP: usize = 2048;
 
 /// One supervised element of a command. A simple command produces one. Each
-/// stage of a pipeline produces one. A statement whose inside we did not look
-/// into (a loop, a subshell, a function definition) produces one with
-/// `delegated` set.
+/// stage of a pipeline produces one. A statement the shell runs whole (a loop,
+/// a subshell, a function call) produces one with `delegated` set, followed by
+/// the commands seen inside it, each with `inside` pointing back.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandRecord {
     /// Position in the script, in execution order, 0-based.
@@ -49,6 +49,15 @@ pub struct CommandRecord {
     /// observed. A coarse status is better than a wrong one.
     #[serde(skip_serializing_if = "is_false", default)]
     pub delegated: bool,
+    /// Index of the statement this command ran inside (a loop body, an `if`
+    /// branch, a function, a subshell, an `eval`). Seen through the shell's
+    /// `DEBUG`/`ERR` traps, not run by the supervisor.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub inside: Option<usize>,
+    /// The status was assumed, not observed: this was the last command of its
+    /// context and the shell reported no failure for it.
+    #[serde(skip_serializing_if = "is_false", default)]
+    pub inferred: bool,
     /// A failure that `||` consumed: expected, not hidden. Never serialized.
     #[serde(skip)]
     pub handled: bool,
@@ -73,6 +82,8 @@ impl CommandRecord {
             delegated: false,
             handled: false,
             substitution_of: None,
+            inside: None,
+            inferred: false,
         }
     }
 }
@@ -102,6 +113,10 @@ pub struct Report {
     /// Index of the command that stopped a `--strict` run.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub stopped_at: Option<usize>,
+    /// Ordinary commands seen inside statements that the envelope left out
+    /// (a long loop). Unhandled failures are never left out.
+    #[serde(skip_serializing_if = "is_zero", default)]
+    pub inner_omitted: usize,
     #[serde(skip_serializing_if = "String::is_empty", default)]
     pub error: String,
 }
@@ -121,6 +136,7 @@ impl Report {
             opaque_substitution: false,
             aborted: false,
             stopped_at: None,
+            inner_omitted: 0,
             error: message,
         }
     }
@@ -225,6 +241,10 @@ pub fn looks_noisy(stdout: &str) -> bool {
         .expect("static regex")
     });
     re.is_match(stdout)
+}
+
+fn is_zero(v: &usize) -> bool {
+    *v == 0
 }
 
 fn is_false(v: &bool) -> bool {

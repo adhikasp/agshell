@@ -15,7 +15,7 @@ $ agshell -c 'false | head -1' --human
 class=stage_failed exit=0                # the agent learns: stage 0 failed
 ```
 
-> Proof of concept, MIT, one Rust binary, 35 tests on Linux. Built on [brush](https://brush.sh), a real bash-compatible shell embedded as a library. No new syntax to teach your agent.
+> Proof of concept, MIT, one Rust binary, tested on Linux and Windows. Built on [brush](https://brush.sh), a real bash-compatible shell embedded as a library. No new syntax to teach your agent.
 
 ## The problem nobody sees
 
@@ -80,7 +80,25 @@ Every run returns an envelope your harness can branch on:
 
 **It reports truth without changing behaviour.** `set -e` and `pipefail` change what a script *does*. agshell changes only what the agent is *told*. Same commands, same side effects, honest status.
 
-**`--strict`: the `set -e` that actually works.** `set -e` does not fire on `a | b`, on earlier commands in a `;` chain, or inside `$( )`. `--strict` stops at the first failed statement, masked pipeline stage or failed substitution. `false || true` is left alone, because `||` handled it.
+**It sees inside `if`, loops, functions, subshells and `eval`.** Other tools stop at the statement boundary: a `for` loop is one opaque unit with one exit code. agshell watches the shell's own `DEBUG` and `ERR` traps while the statement runs, so a failure three iterations deep is reported, and a failure bash already handled (an `if` condition, a `||`, a `!`) is not.
+
+```console
+$ ls
+a.txt                                    # b.txt does not exist
+$ agshell -c 'for f in a b; do cat $f.txt; echo "checked $f"; done' --human
+  #0  cat a.txt          status=0   in #4
+  #1  echo checked a     status=0   in #4
+  #2  cat b.txt          status=1   in #4
+  #3  echo checked b     status=0   in #4 inferred
+  #4  for f in a b; ...  status=0   delegated
+       stderr: cat: b.txt: No such file or directory
+
+class=chain_partial exit=0 hidden_failures=[2]
+```
+
+bash says `exit 0` and prints "checked b" anyway. agshell says which `cat` failed. No control flow is re-implemented: brush still decides what runs, and agshell reads what it announces. Reported commands carry their *expanded* words (`echo item 7`, not `echo item $i`).
+
+**`--strict`: the `set -e` that actually works.** `set -e` does not fire on `a | b`, on earlier commands in a `;` chain, or inside `$( )`. `--strict` stops at the first failed statement, masked pipeline stage, failed substitution, or unhandled failure inside a loop body or function. `false || true` is left alone, because `||` handled it.
 
 ```console
 $ agshell -c 'echo ok; false; echo never' --strict --human
@@ -149,7 +167,8 @@ $ ./target/release/agshell --check -c 'cd /tmp; false | head -1; echo done'
 
 ## Honest limits (PoC)
 
-- Subshells, `if`/`for`/`while`/`case`, functions and `&` are handed to the shell whole and marked `delegated: true`. Coarse, but correct, and a wrong status is worse than a coarse one.
+- Compound statements are run by the shell and observed through its traps, so the numbers are as good as what the shell announces. The last command of a context, when nothing failed, has its status *assumed* (`inferred: true`). A standalone `[[ ]]` or `(( ))` is not announced by the shell, so its failure is reported as `(failure at or after: ...)` instead of being pinned on a neighbour. A statement keeps at most 200 ordinary inner commands (`inner_omitted` says how many were dropped); unhandled failures are never dropped. Your own `DEBUG`/`ERR` traps are suspended while such a statement runs.
+- Background jobs (`cmd &`) and pipelines with a compound stage (`{ ...; } | cat`) are still handed over whole and marked `delegated: true`. Coarse, but correct, and a wrong status is worse than a coarse one.
 - Stderr and timing are reported per pipeline, not per stage, because the shell owns the pipe graph.
 - `--supervise-substitutions` covers standalone simple commands; everything else stays flagged `opaque_substitution`.
 - `brush`'s Windows support is a preview; timeouts and scripts work, POSIX signals and process groups do not exist there.
@@ -157,7 +176,7 @@ $ ./target/release/agshell --check -c 'cd /tmp; false | head -1; echo done'
 
 ## Under the hood
 
-Parse with `brush-parser`, evaluate with embedded `brush-core`, walk the statement list yourself. One shell instance per script (or session), pipelines run by the shell with real streaming and `SIGPIPE`, per-stage statuses read back from `PIPESTATUS`. Statement text is sliced from your original source, so what the report quotes is what you wrote.
+Parse with `brush-parser`, evaluate with embedded `brush-core`, walk the statement list yourself. For statements the shell runs whole, install a `DEBUG`/`ERR` trap that calls a builtin of ours, and read the log back. One shell instance per script (or session), pipelines run by the shell with real streaming and `SIGPIPE`, per-stage statuses read back from `PIPESTATUS`. Statement text is sliced from your original source, so what the report quotes is what you wrote.
 
 ## License
 

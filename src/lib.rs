@@ -21,6 +21,7 @@ pub mod scan;
 pub mod serve;
 pub mod session;
 pub mod sys;
+pub mod trace;
 
 pub use check::{CheckReport, Finding};
 pub use report::{CommandRecord, Report};
