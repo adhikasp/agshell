@@ -41,11 +41,6 @@ struct Cli {
     #[arg(long)]
     strict: bool,
 
-    /// Accepted for compatibility: substitutions are always observed now.
-    #[arg(long, alias = "subs", hide = true)]
-    #[allow(dead_code)]
-    supervise_substitutions: bool,
-
     /// Analyse the script without running it.
     #[arg(long)]
     check: bool,
@@ -67,10 +62,6 @@ enum Mode {
         #[arg(long)]
         strict: bool,
 
-        /// Accepted for compatibility: substitutions are always observed now.
-        #[arg(long, alias = "subs", hide = true)]
-        #[allow(dead_code)]
-        supervise_substitutions: bool,
     },
 }
 
@@ -86,7 +77,6 @@ async fn main() -> ExitCode {
         timeout,
         max_stdout,
         strict,
-        supervise_substitutions: _,
     }) = cli.command
     {
         let opts = Options {

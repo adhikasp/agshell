@@ -146,12 +146,6 @@ fn a_failing_substitution_reaches_the_class() {
 }
 
 #[test]
-fn the_old_flag_is_still_accepted() {
-    let (report, _) = run_with("echo $(false) done", &["--supervise-substitutions"]);
-    assert_eq!(report["class"], "substitution_failed", "{report}");
-}
-
-#[test]
 fn quoting_is_the_shells_own() {
     let report = run_with("printf '[%s]\n' $(printf 'a b')", &[]).0;
 

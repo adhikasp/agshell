@@ -103,7 +103,7 @@ pub struct Report {
     pub stdout_bytes: usize,
     #[serde(skip_serializing_if = "is_false", default)]
     pub stdout_truncated: bool,
-    /// Some substitution was executed by the shell rather than supervised, so
+    /// Some substitution ran unobserved (in a pipeline stage or a background job), so
     /// a failure inside it is not in `commands`.
     #[serde(skip_serializing_if = "is_false", default)]
     pub opaque_substitution: bool,
