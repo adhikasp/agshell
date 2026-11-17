@@ -16,6 +16,7 @@
 //! ```
 
 pub mod check;
+pub mod daemon;
 pub mod report;
 pub mod scan;
 pub mod serve;

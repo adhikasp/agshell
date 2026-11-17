@@ -248,8 +248,7 @@ dependencies = [
 [[package]]
 name = "brush-core"
 version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "967a82f3b1bf090db686d5fb86424b19725073828532a42f960d5a13bff14ecb"
+source = "git+https://github.com/adhikasp/brush?rev=dc9cd12bfe75f08872e603936874dcab8cfc9461#dc9cd12bfe75f08872e603936874dcab8cfc9461"
 dependencies = [
  "async-recursion",
  "async-trait",
@@ -287,8 +286,7 @@ dependencies = [
 [[package]]
 name = "brush-parser"
 version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9f64b19efc02f0dd6cac1d462e20a1098f425f09cb13624efbb1b7d63f061735"
+source = "git+https://github.com/adhikasp/brush?rev=dc9cd12bfe75f08872e603936874dcab8cfc9461#dc9cd12bfe75f08872e603936874dcab8cfc9461"
 dependencies = [
  "bon",
  "cached",

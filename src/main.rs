@@ -44,6 +44,11 @@ struct Cli {
     /// Analyse the script without running it.
     #[arg(long)]
     check: bool,
+
+    /// Run in this directory's persistent shell, so `cd`, exports and functions carry
+    /// over between calls (`serve` daemon over loopback).
+    #[arg(long)]
+    session: bool,
 }
 
 #[derive(Debug, Subcommand)]
@@ -62,6 +67,13 @@ enum Mode {
         #[arg(long)]
         strict: bool,
 
+        /// Listen on this address (host:port) instead of stdin/stdout.
+        #[arg(long, value_name = "ADDR")]
+        listen: Option<String>,
+
+        /// Where the bound port is written, so clients can find the daemon.
+        #[arg(long, value_name = "PATH")]
+        state_file: Option<std::path::PathBuf>,
     },
 }
 
@@ -77,6 +89,8 @@ async fn main() -> ExitCode {
         timeout,
         max_stdout,
         strict,
+        listen,
+        state_file,
     }) = cli.command
     {
         let opts = Options {
@@ -84,7 +98,14 @@ async fn main() -> ExitCode {
             max_stdout,
             strict,
         };
-        return match agshell::serve::run(opts).await {
+        let served = match (listen, state_file) {
+            (Some(listen), Some(state_file)) => {
+                agshell::daemon::run_server(opts, &listen, &state_file).await
+            }
+            (Some(_), None) => Err("--listen needs --state-file".to_string()),
+            (None, _) => agshell::serve::run(opts).await,
+        };
+        return match served {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
                 eprintln!("agshell: serve: {e}");
@@ -122,6 +143,27 @@ async fn main() -> ExitCode {
 
     drop(session);
 
+    // A harness can only name a binary, not add flags, so the environment is how it asks
+    // for the persistent shell.
+    if cli.session || std::env::var_os("AGSHELL_SESSION").is_some() {
+        return match agshell::daemon::run(&script).await {
+            Ok(mut report) => {
+                report.with_hints();
+                if cli.human {
+                    print_human(&script, &report);
+                } else {
+                    print_json(&report);
+                }
+                let _ = std::io::stdout().flush();
+                ExitCode::from(u8::try_from(report.exit.clamp(0, 255)).unwrap_or(1))
+            }
+            Err(e) => {
+                eprintln!("agshell: session: {e}");
+                ExitCode::from(2)
+            }
+        };
+    }
+
     let mut session = match Session::new(opts).await {
         Ok(session) => session,
         Err(e) => {
@@ -130,7 +172,8 @@ async fn main() -> ExitCode {
         }
     };
 
-    let report = session.run(&script).await;
+    let mut report = session.run(&script).await;
+    report.with_hints();
     let code = report.exit;
 
     if cli.human {

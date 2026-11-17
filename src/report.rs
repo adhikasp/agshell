@@ -121,7 +121,61 @@ pub struct Report {
     pub error: String,
 }
 
+/// PowerShell cmdlets, by approved verb prefix, that an agent is most likely to type at a
+/// bash shell. A `command not found` for one of these is a wrong-shell mistake, not a
+/// missing program, and saying so saves the agent a whole extra tool call.
+const POWERSHELL_VERBS: &[&str] = &[
+    "Add", "Clear", "Compare", "Complete", "Convert", "Copy", "Disable", "Enable", "Enter",
+    "Export", "Find", "Format", "Get", "Group", "Import", "Invoke", "Join", "Measure", "Move",
+    "New", "Out", "Pop", "Push", "Read", "Receive", "Remove", "Rename", "Resolve", "Restart",
+    "Restore", "Resume", "Save", "Select", "Send", "Set", "Show", "Sort", "Split", "Start",
+    "Step", "Stop", "Submit", "Suspend", "Switch", "Tee", "Test", "Trace", "Unblock", "Undo",
+    "Uninstall", "Unprotect", "Unregister", "Update", "Use", "Wait", "Where", "Write",
+];
+
+/// The program name out of a `command not found` line, if that is what this is.
+fn missing_program(stderr: &str) -> Option<&str> {
+    let marker = "command not found: ";
+    let rest = &stderr[stderr.find(marker)? + marker.len()..];
+    let end = rest
+        .find(|c: char| c.is_whitespace())
+        .unwrap_or(rest.len());
+    (end > 0).then(|| &rest[..end])
+}
+
+/// `Get-ChildItem` and friends: an approved PowerShell verb followed by `-`.
+fn looks_like_cmdlet(name: &str) -> bool {
+    let Some((verb, _)) = name.split_once('-') else {
+        return false;
+    };
+    POWERSHELL_VERBS.contains(&verb)
+}
+
 impl Report {
+    /// Turns "command not found: Get-ChildItem" into advice the model can act on.
+    ///
+    /// Only touches status 127 with a wrong-shell-looking name; everything else is left
+    /// exactly as the command wrote it.
+    pub fn with_hints(&mut self) {
+        for command in &mut self.commands {
+            if command.status != 127 {
+                continue;
+            }
+            let Some(name) = missing_program(&command.stderr) else {
+                continue;
+            };
+            if !looks_like_cmdlet(name) {
+                continue;
+            }
+            command.stderr.push_str(&format!(
+                "hint: `{name}` is a PowerShell cmdlet, not a bash command. This shell is agshell \
+                 (bash-compatible): run it as `pwsh -NoProfile -Command \"{name} ...\"`, or use the \
+                 POSIX equivalent (Get-Content=cat, Get-ChildItem=ls, Select-Object=head/sed, \
+                 Test-Path=test -e).\n"
+            ));
+        }
+    }
+
     /// A report for a script the shell would not parse.
     pub fn parse_error(message: String, duration_ms: i64) -> Self {
         Self {
