@@ -31,33 +31,36 @@ keeping between runs, not worth committing.
 
 ## Found so far
 
-**Open: a 10-byte script makes the parser allocate without bound and abort.**
-Found by the `check` target in its first minute (2026-11-18, semar); not fixed.
+**Found and fixed: a 10-byte script made the parser allocate without bound and
+abort.** The `check` target found it in its first minute (2026-11-18, semar).
 
 ```console
-$ agshell --check -c '$( ( <<- )'          # also: agshell -c '$( ( <<- )'
+$ agshell --check -c '$( ( <<- )'          # before the fix: 2.4 GB, then abort
 memory allocation of 14680064 bytes failed
 ```
 
-The parse loop keeps allocating (112 MB chunks in the first variant, 14 MB here)
-until the allocator gives up — 2.4 GB RSS in ~8 s before the abort. libFuzzer's
-original input was `F\n$( (% ($n<<- ) )`; `tmin` reduced it to
-`F\n$( (% ($n<<- ) )` → `$( (% ($n<<- ) )` → this. Nothing in agshell's own code
-is involved: `Session::check` calls `Shell::parse_string` first, so the growth is
-in `brush-parser`'s handling of an unterminated `$(` whose body holds a `<<-`
-heredoc operator with a `)` for a delimiter. `$( ( <<- ) )` and `$( ( <<- )` (a
-balanced and an unbalanced variant) are both fine, so it needs the specific
-unterminated shape.
+The parse loop kept allocating (112 MB chunks in the first variant, 14 MB here)
+until the allocator gave up — 2.4 GB RSS in ~8 s. libFuzzer's original input was
+`F\n$( (% ($n<<- ) )`; `tmin` reduced it to that 10-byte script. Nothing in
+agshell's own code was involved: `Session::check` calls `Shell::parse_string`
+first, so the growth was `brush-parser` on an unterminated `$(` whose body holds
+a `<<-` heredoc operator with `)` for a delimiter.
 
-Consequences worth knowing: an agent can type this by accident, and the abort
-takes the process — under `--session` that is the *daemon*, and every session
-keyed to that directory. Until it is fixed upstream, run the fuzzer with
-`-rss_limit_mb=900` so it reports the finding instead of eating the machine.
+**Fixed upstream, and ported.** `reubeno/brush` fixed this in
+`7dc43800` ("improve tokenizer handling of here-docs and nested expansions",
+#1416, with a snapshot test named
+`parse_here_doc_left_open_in_nested_command_substitution` — the same shape), but
+released nothing past `brush-parser 0.4.0`. The fork therefore carries a port:
+`adhikasp/brush@d7cc2189` = the Windows `.cmd`/`.bat` exec patch + that tokenizer
+fix (the cache macro, which needs `cached` 2.x, is dropped instead of bumping the
+dependency). Verified on semar with a parser probe under a 900 MB cap: all three
+variants return `parse error: missing here-document tag before ")"` in 0.00 s, and
+a *valid* heredoc inside `$( )` still parses. agshell 0.5.3 pins it.
 
-The same file is kept on semar at
-`~/Workspace/agshell-fuzz/fuzz/artifacts/check/minimized-from-4e0d9d76afb9d7ad9a7200e9f164856ca0aec991`.
-It is deliberately **not** committed to `seeds/`: replaying it makes the target
-die at startup, which would hide every other finding.
+Re-run this target with `-rss_limit_mb=900` so a memory bug is reported as a
+finding instead of taking the machine. Both the 10-byte and the original 18-byte
+input are now regression seeds in `seeds/check/`: with the fix in place they are
+ordinary parse errors, so the target replays them on every run.
 
 The same invariants run on every platform, without a fuzzer, in
 `../tests/props.rs` (proptest) and in the deterministic junk passes in

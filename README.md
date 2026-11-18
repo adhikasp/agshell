@@ -182,7 +182,7 @@ $ cargo install --git https://github.com/adhikasp/agshell --locked
 - Stderr and timing are reported per pipeline, not per stage, because the shell owns the pipe graph.
 - A `$( )` in a pipeline stage (`echo $(cmd) | grep x`) or a background job is not observed and is flagged `opaque_substitution`. Everywhere else, in a lone command, a heredoc, a loop body or a function, it is.
 - `brush`'s Windows support is a preview; timeouts and scripts work, POSIX signals and process groups do not exist there.
-- **Windows installs from crates.io** resolve `.cmd`/`.bat` programs (`npm`, `npx`, `opencode`, ...) with the unpatched `brush-core` resolver, so they fail with `os error 193`. The fix is a pinned `brush` fork, and cargo does not publish `[patch]` sections; use `cargo install --git https://github.com/adhikasp/agshell` until it lands upstream.
+- **Windows installs from crates.io** resolve `.cmd`/`.bat` programs (`npm`, `npx`, `opencode`, ...) with the unpatched `brush-core` resolver, so they fail with `os error 193`. The fix is a pinned `brush` fork, and cargo does not publish `[patch]` sections; use `cargo install --git https://github.com/adhikasp/agshell` until it lands upstream. The same pin now carries a parser fix as well (`brush-parser` allocated without bound on a here-doc left open inside `$( )`; upstream fixed it on `main` after 0.4.0, so `cargo install --git` is the only build without it).
 - Next up: an exec observer in `brush-core` for real `argv`, per-stage pids and a policy seam. That is an upstream change.
 
 ## Tests
