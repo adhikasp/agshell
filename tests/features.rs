@@ -6,12 +6,13 @@
 use std::io::{Read, Write};
 use std::process::{Command, Stdio};
 
-use serde_json::{Value, json};
+use serde_json::Value;
 
 const BIN: &str = env!("CARGO_BIN_EXE_agshell");
 
 fn run_with(script: &str, extra: &[&str]) -> (Value, i32) {
     let output = Command::new(BIN)
+        .env_remove("AGSHELL_SESSION")
         .arg("-c")
         .arg(script)
         .args(extra)
@@ -65,6 +66,7 @@ fn strict_stops_on_a_masked_pipeline_stage() {
 #[test]
 fn check_finds_dropped_statuses_without_running_anything() {
     let output = Command::new(BIN)
+        .env_remove("AGSHELL_SESSION")
         .args(["--check", "-c", "cd /tmp; false | head -1; echo done"])
         .output()
         .expect("run agshell --check");
@@ -86,6 +88,7 @@ fn check_finds_dropped_statuses_without_running_anything() {
 #[test]
 fn check_passes_a_clean_script() {
     let output = Command::new(BIN)
+        .env_remove("AGSHELL_SESSION")
         .args(["--check", "-c", "echo hi && echo there"])
         .output()
         .expect("run agshell --check");
@@ -97,6 +100,7 @@ fn check_passes_a_clean_script() {
 #[test]
 fn check_flags_a_powershell_script_bash_would_expand() {
     let output = Command::new(BIN)
+        .env_remove("AGSHELL_SESSION")
         .args([
             "--check",
             "-c",
@@ -119,6 +123,7 @@ fn check_flags_a_powershell_script_bash_would_expand() {
 #[test]
 fn check_accepts_a_single_quoted_powershell_script() {
     let output = Command::new(BIN)
+        .env_remove("AGSHELL_SESSION")
         .args([
             "--check",
             "-c",
@@ -134,6 +139,7 @@ fn check_accepts_a_single_quoted_powershell_script() {
 #[test]
 fn check_reports_a_parse_error() {
     let output = Command::new(BIN)
+        .env_remove("AGSHELL_SESSION")
         .args(["--check", "-c", "if then"])
         .output()
         .expect("run agshell --check");
@@ -217,6 +223,7 @@ fn a_substitution_in_a_pipeline_stage_is_still_opaque() {
 #[test]
 fn serve_keeps_state_snapshots_and_branches() {
     let mut child = Command::new(BIN)
+        .env_remove("AGSHELL_SESSION")
         .arg("serve")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -287,6 +294,7 @@ fn serve_keeps_state_snapshots_and_branches() {
 #[test]
 fn serve_answers_errors_without_dying() {
     let mut child = Command::new(BIN)
+        .env_remove("AGSHELL_SESSION")
         .arg("serve")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

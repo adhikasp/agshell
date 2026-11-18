@@ -1,2 +1,19 @@
 [tools]
 rust = "latest"
+
+# The suite is safe to run from an agent's shell: every test that spawns the
+# binary strips AGSHELL_SESSION, because a session daemon would answer all of
+# them at once and the suite would hang. These tasks are the on-demand runs.
+[tasks.test]
+description = "The whole suite: unit, envelope, features, inside, compat, library"
+run = "cargo test --release"
+
+[tasks.compat]
+description = "Cross-platform compatibility only: bash differential, real pwsh round trips, linter fuzz"
+run = "cargo test --release --test compat"
+
+# Long pass: AGSHELL_FUZZ_ROUNDS=200000 mise run fuzz (sh), or
+# $env:AGSHELL_FUZZ_ROUNDS=200000 on PowerShell.
+[tasks.fuzz]
+description = "Deterministic junk through the scanner and the linter (AGSHELL_FUZZ_ROUNDS overrides the count)"
+run = "cargo test --release fuzz"

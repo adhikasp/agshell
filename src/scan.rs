@@ -171,7 +171,7 @@ pub fn foreign_script_expansion(src: &str) -> Option<ForeignScript> {
     let mut words = split_words(src);
     while words
         .first()
-        .is_some_and(|w| matches!(w.as_str(), "&" | "command"))
+        .is_some_and(|w| matches!(w.as_str(), "&" | "command") || is_assignment(w))
     {
         words.remove(0);
     }
@@ -194,6 +194,19 @@ pub fn foreign_script_expansion(src: &str) -> Option<ForeignScript> {
     }
 
     None
+}
+
+/// `NAME=value` in front of the command, as in `NO_COLOR=1 pwsh …`.
+fn is_assignment(word: &str) -> bool {
+    let Some((name, _)) = word.split_once('=') else {
+        return false;
+    };
+    !name.is_empty()
+        && name
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 /// The interpreter's bare name, or `None` if this word is not one of ours.
@@ -316,5 +329,112 @@ mod tests {
     fn ignores_other_programs_and_mentions() {
         assert!(foreign_script_expansion(r#"node -e "console.log($x)""#).is_none());
         assert!(foreign_script_expansion(r#"echo pwsh -Command "$x""#).is_none());
+    }
+
+    /// One table of the shapes people actually type, so a change to the scanner
+    /// has to keep all of them right at once.
+    #[test]
+    fn the_shape_table() {
+        let cases: &[(&str, bool)] = &[
+            // every spelling of the interpreter
+            (r#"pwsh -Command "$env:PATH""#, true),
+            (r#"pwsh.exe -Command "$env:PATH""#, true),
+            (r#"powershell -Command "$env:PATH""#, true),
+            (r#"powershell.exe -NoProfile -Command "$env:PATH""#, true),
+            (r#""C:/Program Files/PowerShell/7/pwsh.exe" -Command "$env:PATH""#, true),
+            (r#"& "C:/Program Files/PowerShell/7/pwsh.exe" -Command "$env:PATH""#, true),
+            (r#"command pwsh -Command "$env:PATH""#, true),
+            (r#"NO_COLOR=1 pwsh -Command "$env:PATH""#, true),
+            // the short flag, whatever its case
+            (r#"pwsh -c "Get-Item $_.Name""#, true),
+            (r#"pwsh -CommandWithArgs "Get-Item $_.Name" x"#, true),
+            // backticks are expanded by this shell too
+            ("pwsh -Command \"`git rev-parse HEAD`\"", true),
+            // the fix: single quotes, and no expansion to find
+            (r#"pwsh -Command 'Get-Item $_.Name'"#, false),
+            (r#"pwsh -NoProfile -Command "Get-Item .\file.txt""#, false),
+            (r#"pwsh -NoProfile -File build.ps1"#, false),
+            (r#"pwsh -NoProfile -EncodedCommand RQBjAGgAbwA="#, false),
+            // not ours to warn about
+            (r#"cmd /c "echo %PATH%""#, false),
+            (r#"node -e "console.log($x)""#, false),
+            (r#"pwsh --version"#, false),
+            (r#"echo 'pwsh -Command "$x"'"#, false),
+        ];
+
+        for (source, expected) in cases {
+            let hit = foreign_script_expansion(source);
+            assert_eq!(
+                hit.is_some(),
+                *expected,
+                "{source:?} → {hit:?} (expected {expected})"
+            );
+            if let Some(hit) = hit {
+                assert!(
+                    source.contains(&hit.word),
+                    "{source:?}: the matched word is not in the source: {hit:?}"
+                );
+            }
+        }
+    }
+
+    /// A deterministic mini-fuzz: no dependency, same corpus every run, and it
+    /// terminates. The first version of [`split_words`] spun forever on a space
+    /// inside double quotes while allocating 24 GB; this is the guard that a
+    /// random pile of quotes and `$` can never do that again.
+    #[test]
+    fn fuzz_the_scanner_survives_random_junk() {
+        const TOKENS: &[&str] = &[
+            "pwsh", "powershell.exe", "-Command", "-c", "-File", "-EncodedCommand", "\"", "'", "$",
+            "$_", "$env:X", "`", "(", ")", "{", "}", "@", " ", "  ", "\n", "\\", "|", "&&", ";",
+            "Get-Item", "echo", "&", "command", "X=1", "-NoProfile", "a", "=", "'", "\"",
+        ];
+
+        let rounds: usize = std::env::var("AGSHELL_FUZZ_ROUNDS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(4_000);
+
+        let mut state: u64 = 0x5f37_5b4d_2a19_c7e1;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+
+        for round in 0..rounds {
+            let len = (next() % 14) as usize;
+            let mut source = String::new();
+            for _ in 0..len {
+                source.push_str(TOKENS[(next() % TOKENS.len() as u64) as usize]);
+            }
+
+            let first = foreign_script_expansion(&source);
+            assert_eq!(
+                first,
+                foreign_script_expansion(&source),
+                "round {round}: not deterministic for {source:?}"
+            );
+
+            if let Some(hit) = first {
+                assert!(
+                    hit.word.starts_with('"'),
+                    "round {round}: a match that is not a double-quoted argument: {source:?} → {hit:?}"
+                );
+                assert!(
+                    hit.word.contains('$') || hit.word.contains('`'),
+                    "round {round}: a match with nothing to expand: {source:?} → {hit:?}"
+                );
+                assert!(
+                    source.contains(&hit.word),
+                    "round {round}: matched text is not in the source: {source:?} → {hit:?}"
+                );
+                assert!(
+                    hit.interpreter == "pwsh" || hit.interpreter == "powershell",
+                    "round {round}: {hit:?}"
+                );
+            }
+        }
     }
 }

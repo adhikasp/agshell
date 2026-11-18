@@ -185,6 +185,16 @@ $ cargo install --git https://github.com/adhikasp/agshell --locked
 - **Windows installs from crates.io** resolve `.cmd`/`.bat` programs (`npm`, `npx`, `opencode`, ...) with the unpatched `brush-core` resolver, so they fail with `os error 193`. The fix is a pinned `brush` fork, and cargo does not publish `[patch]` sections; use `cargo install --git https://github.com/adhikasp/agshell` until it lands upstream.
 - Next up: an exec observer in `brush-core` for real `argv`, per-stage pids and a policy seam. That is an upstream change.
 
+## Tests
+
+`cargo test --release` — 62 tests on Windows, 60 on Linux and macOS (the two `pwsh` round trips are `cfg(windows)`): the envelope contract, the features (`--strict`, `--check`, `serve`), what the traps see inside compounds, the library surface, and a `compat` file that keeps the platforms honest:
+
+- **`differential_against_bash`** runs a corpus of quoting and expansion shapes through agshell *and* through a real `bash`, then compares stdout and exit status. It finds a working bash even on Windows, where `bash.exe` on `PATH` is usually the WSL stub; without one, it says so and skips.
+- **`a_real_pwsh_roundtrip_survives_the_shell`** is the Windows-only pair: a single-quoted PowerShell script must come back with PowerShell's answer (`'Write-Output (1 + 1)'` → `2`, `'… { $_.ToUpper() }'` → `X`), and the double-quoted spelling of the same thing must come back as a failure carrying the `hint:`.
+- **`fuzz_the_linter_never_hangs_or_panics`** and **`fuzz_the_scanner_survives_random_junk`** throw deterministic pseudo-random junk (quotes, `$`, backticks, flags) at the scanner and the linter: same verdict every run, never a hang, and a flag only ever on a double-quoted argument that really holds something to expand. There is no fuzz dependency; seed and corpus are fixed, so a failure is reproducible by round number. Run a long pass with `AGSHELL_FUZZ_ROUNDS=200000 cargo test --release fuzz`, or `mise run fuzz`.
+
+If `AGSHELL_SESSION` is set (an agent's shell exports it), the tests are unaffected: they strip it from every process they spawn, because otherwise all of them would be answered by one shared session daemon and the suite would hang.
+
 ## Under the hood
 
 Parse with `brush-parser`, evaluate with embedded `brush-core`, walk the statement list yourself. For statements the shell runs whole, install a `DEBUG`/`ERR` trap that calls a builtin of ours, and read the log back. One shell instance per script (or session), pipelines run by the shell with real streaming and `SIGPIPE`, per-stage statuses read back from `PIPESTATUS`. Statement text is sliced from your original source, so what the report quotes is what you wrote.

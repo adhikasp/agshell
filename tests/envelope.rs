@@ -12,6 +12,7 @@ const BIN: &str = env!("CARGO_BIN_EXE_agshell");
 
 fn run_with(script: &str, extra: &[&str]) -> (Value, i32) {
     let output = Command::new(BIN)
+        .env_remove("AGSHELL_SESSION")
         .arg("-c")
         .arg(script)
         .args(extra)
