@@ -1,0 +1,1 @@
+pwsh -c "Get-Item $env:PATH"

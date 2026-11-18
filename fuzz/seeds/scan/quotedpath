@@ -1,0 +1,1 @@
+"C:/Program Files/PowerShell/7/pwsh.exe" -Command "$x" & "C:/pwsh/pwsh.exe" -c "`x`"

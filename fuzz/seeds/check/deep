@@ -1,0 +1,1 @@
+( ( ( echo nested ) ) ); { echo brace; } ; [[ -f x ]] && echo yes

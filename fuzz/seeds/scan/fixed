@@ -1,0 +1,1 @@
+pwsh -NoProfile -Command 'Get-Item $_.Name'

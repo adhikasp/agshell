@@ -1,0 +1,1 @@
+pwsh -NoProfile -Command "$_.Capacity/1GB"

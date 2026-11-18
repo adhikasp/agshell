@@ -1,0 +1,1 @@
+echo "pwsh -Command \"$x\""; pwsh -File build.ps1

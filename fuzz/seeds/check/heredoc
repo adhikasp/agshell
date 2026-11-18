@@ -1,0 +1,3 @@
+cat <<EOF
+$(date) and $x
+EOF
