@@ -21,7 +21,10 @@ cargo install cargo-fuzz
 cargo +nightly fuzz run scan seeds/scan -- -max_total_time=60
 
 # The parser and the linter: no panic on arbitrary text, deterministic findings.
-cargo +nightly fuzz run check seeds/check -- -max_total_time=120
+# ASan needs headroom for its shadow and quarantine; a tight -rss_limit_mb makes
+# it report an OOM that is not in the code.
+ASAN_OPTIONS=quarantine_size_mb=64 cargo +nightly fuzz run check seeds/check \
+  -- -max_total_time=120 -rss_limit_mb=2048
 ```
 
 A crash writes its input to `artifacts/<target>/`; reproduce it with
@@ -57,10 +60,16 @@ dependency). Verified on semar with a parser probe under a 900 MB cap: all three
 variants return `parse error: missing here-document tag before ")"` in 0.00 s, and
 a *valid* heredoc inside `$( )` still parses. agshell 0.5.3 pins it.
 
-Re-run this target with `-rss_limit_mb=900` so a memory bug is reported as a
-finding instead of taking the machine. Both the 10-byte and the original 18-byte
-input are now regression seeds in `seeds/check/`: with the fix in place they are
-ordinary parse errors, so the target replays them on every run.
+A libFuzzer OOM is a claim about the process, not the input: before believing it,
+replay it against the plain release binary (`agshell --check -c "$(cat
+artifacts/check/<file>)"`, or a probe) under a memory cap. A tight
+`-rss_limit_mb` with ASan's default quarantine produces false ones — 1029 MB on
+the 10-byte seed that the plain build answers in 7 MB. Use
+`-rss_limit_mb=2048` and `ASAN_OPTIONS=quarantine_size_mb=64`.
+
+Both the 10-byte and the original 18-byte input are now regression seeds in
+`seeds/check/`: with the fix in place they are ordinary parse errors, so the
+target replays them on every run.
 
 The same invariants run on every platform, without a fuzzer, in
 `../tests/props.rs` (proptest) and in the deterministic junk passes in
