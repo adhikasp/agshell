@@ -195,6 +195,16 @@ $ cargo install --git https://github.com/adhikasp/agshell --locked
 
 If `AGSHELL_SESSION` is set (an agent's shell exports it), the tests are unaffected: they strip it from every process they spawn, because otherwise all of them would be answered by one shared session daemon and the suite would hang.
 
+**Property tests and a real fuzzer.** `tests/props.rs` uses [proptest](https://crates.io/crates/proptest) (dev-dependency) for four properties, with shrinking so a divergence comes back as the smallest script instead of corpus entry 17: quoting decides the scanner; the linter and the scanner never disagree; arbitrary text through the parser/linter is deterministic and well-formed; and generated *valid* scripts must print and exit exactly as bash does. `PROPTEST_CASES=1000` for a longer pass.
+
+`fuzz/` is a separate [cargo-fuzz](https://crates.io/crates/cargo-fuzz) package — a `scan` target for the word scanner and a `check` target for the parser plus the linter, both seeded from `fuzz/seeds/` so the fuzzer starts near the shapes that matter (`1.8M runs in 90s` is a normal minute on a laptop). **libFuzzer needs LLVM sanitizers and does not run on Windows**, so this half lives on a Linux box:
+
+```console
+$ cargo +nightly fuzz run scan  fuzz/seeds/scan  -- -max_total_time=60
+$ cargo +nightly fuzz run check fuzz/seeds/check -- -max_total_time=120
+```
+
+
 ## Under the hood
 
 Parse with `brush-parser`, evaluate with embedded `brush-core`, walk the statement list yourself. For statements the shell runs whole, install a `DEBUG`/`ERR` trap that calls a builtin of ours, and read the log back. One shell instance per script (or session), pipelines run by the shell with real streaming and `SIGPIPE`, per-stage statuses read back from `PIPESTATUS`. Statement text is sliced from your original source, so what the report quotes is what you wrote.
