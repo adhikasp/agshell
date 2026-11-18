@@ -10,7 +10,7 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
 name = "agshell"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "brush-builtins",
  "brush-core",
@@ -292,7 +292,7 @@ dependencies = [
 [[package]]
 name = "brush-core"
 version = "0.5.0"
-source = "git+https://github.com/adhikasp/brush?rev=d7cc21891903fd251083c6f729b3fae1c06996ff#d7cc21891903fd251083c6f729b3fae1c06996ff"
+source = "git+https://github.com/adhikasp/brush?rev=f79bc7620b28afdc52a3b12427ce2ca43da82c32#f79bc7620b28afdc52a3b12427ce2ca43da82c32"
 dependencies = [
  "async-recursion",
  "async-trait",
@@ -330,7 +330,7 @@ dependencies = [
 [[package]]
 name = "brush-parser"
 version = "0.4.0"
-source = "git+https://github.com/adhikasp/brush?rev=d7cc21891903fd251083c6f729b3fae1c06996ff#d7cc21891903fd251083c6f729b3fae1c06996ff"
+source = "git+https://github.com/adhikasp/brush?rev=f79bc7620b28afdc52a3b12427ce2ca43da82c32#f79bc7620b28afdc52a3b12427ce2ca43da82c32"
 dependencies = [
  "bon",
  "cached",

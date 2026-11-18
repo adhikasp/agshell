@@ -56,8 +56,10 @@ pub fn kinds(report: &CheckReport) -> Vec<&str> {
 }
 
 /// A `bash` that actually runs. On Windows, `bash.exe` on `PATH` is usually the
-/// WSL stub, which fails when no distro is installed; Git for Windows ships a
-/// real one.
+/// WSL stub, which fails when no distro is installed — and can be worse than
+/// failing: it answers a trivial probe and then runs a script differently
+/// (`x=7; printf "$x"` printed empty, 2026-11-18). Probe with an assignment, an
+/// expansion and arithmetic, so only a real bash passes.
 pub fn bash_program() -> Option<String> {
     const CANDIDATES: &[&str] = &[
         "bash",
@@ -68,10 +70,13 @@ pub fn bash_program() -> Option<String> {
     ];
 
     for candidate in CANDIDATES {
-        let Ok(output) = Command::new(candidate).args(["-c", "printf ok"]).output() else {
+        let Ok(output) = Command::new(candidate)
+            .args(["-c", r#"x=7; printf '%s' "$x $((x*2)) ${x:-none}""#])
+            .output()
+        else {
             continue;
         };
-        if output.status.success() && output.stdout == b"ok" {
+        if output.status.success() && output.stdout == b"7 14 7" {
             return Some((*candidate).to_string());
         }
     }

@@ -1,6 +1,6 @@
 [package]
 name = "agshell"
-version = "0.5.3"
+version = "0.5.4"
 edition = "2024"
 rust-version = "1.88"
 description = "A supervised execution shell for coding agents: per-command and per-stage exit status instead of one exit code per command string."
@@ -53,6 +53,6 @@ lto = "thin"
 # failing with "not a valid Win32 application", and resolve the extension a PATH search
 # dropped. One function in brush-core; see compose_windows_command. Pending upstream.
 [patch.crates-io]
-brush-core = { git = "https://github.com/adhikasp/brush", rev = "d7cc21891903fd251083c6f729b3fae1c06996ff" }
-brush-parser = { git = "https://github.com/adhikasp/brush", rev = "d7cc21891903fd251083c6f729b3fae1c06996ff" }
+brush-core = { git = "https://github.com/adhikasp/brush", rev = "f79bc7620b28afdc52a3b12427ce2ca43da82c32" }
+brush-parser = { git = "https://github.com/adhikasp/brush", rev = "f79bc7620b28afdc52a3b12427ce2ca43da82c32" }
 

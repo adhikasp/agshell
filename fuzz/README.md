@@ -60,6 +60,11 @@ dependency). Verified on semar with a parser probe under a 900 MB cap: all three
 variants return `parse error: missing here-document tag before ")"` in 0.00 s, and
 a *valid* heredoc inside `$( )` still parses. agshell 0.5.3 pins it.
 
+Re-run this target with `-rss_limit_mb=900` so a memory bug is reported as a
+finding instead of taking the machine. Both the 10-byte and the original 18-byte
+input are now regression seeds in `seeds/check/`: with the fix in place they are
+ordinary parse errors, so the target replays them on every run.
+
 A libFuzzer OOM is a claim about the process, not the input: before believing it,
 replay it against the plain release binary (`agshell --check -c "$(cat
 artifacts/check/<file>)"`, or a probe) under a memory cap. A tight
@@ -67,9 +72,20 @@ artifacts/check/<file>)"`, or a probe) under a memory cap. A tight
 the 10-byte seed that the plain build answers in 7 MB. Use
 `-rss_limit_mb=2048` and `ASAN_OPTIONS=quarantine_size_mb=64`.
 
-Both the 10-byte and the original 18-byte input are now regression seeds in
-`seeds/check/`: with the fix in place they are ordinary parse errors, so the
-target replays them on every run.
+**Found and fixed: a panic on a huge io-number.** Twenty seconds into the next
+run (with the here-doc fix in place) the same target found
+
+```console
+$ agshell --check -c 'echo 88888888888888888888<8888'
+thread '<unnamed>' panicked at brush-parser/src/parser/peg.rs:695:27:
+called `Result::unwrap()` on an `Err` value: ParseIntError { kind: PosOverflow }
+```
+
+— a redirection's io-number parsed into an integer without a range check. A panic
+in the parse path is a lost tool call, so it got the same treatment: upstream had
+already fixed it in `48cbaed5` (#1271, "decline out-of-range numeric values
+instead of unwrapping"), released nowhere, so the fork ports it too
+(`f79bc762`). The input is `seeds/check/huge-io-number`.
 
 The same invariants run on every platform, without a fuzzer, in
 `../tests/props.rs` (proptest) and in the deterministic junk passes in

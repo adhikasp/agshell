@@ -19,8 +19,8 @@ agshell = { path = ".." }
 [workspace]
 
 [patch.crates-io]
-brush-core = { git = "https://github.com/adhikasp/brush", rev = "d7cc21891903fd251083c6f729b3fae1c06996ff" }
-brush-parser = { git = "https://github.com/adhikasp/brush", rev = "d7cc21891903fd251083c6f729b3fae1c06996ff" }
+brush-core = { git = "https://github.com/adhikasp/brush", rev = "f79bc7620b28afdc52a3b12427ce2ca43da82c32" }
+brush-parser = { git = "https://github.com/adhikasp/brush", rev = "f79bc7620b28afdc52a3b12427ce2ca43da82c32" }
 
 [[bin]]
 name = "check"
