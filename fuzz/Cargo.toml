@@ -1,0 +1,37 @@
+[package]
+name = "agshell-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+tokio = { version = "1", features = ["rt", "rt-multi-thread"] }
+agshell = { path = ".." }
+
+# A nested package must declare its own workspace, or it would try to join the
+# parent (which is not one). The `[patch.crates-io]` below is copied from the
+# parent on purpose: the checker takes `brush_parser` AST types, so both must
+# resolve to the same `brush` fork or the types do not match.
+[workspace]
+
+[patch.crates-io]
+brush-core = { git = "https://github.com/adhikasp/brush", rev = "dc9cd12bfe75f08872e603936874dcab8cfc9461" }
+brush-parser = { git = "https://github.com/adhikasp/brush", rev = "dc9cd12bfe75f08872e603936874dcab8cfc9461" }
+
+[[bin]]
+name = "check"
+path = "fuzz_targets/check.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "scan"
+path = "fuzz_targets/scan.rs"
+test = false
+doc = false
+bench = false

@@ -10,7 +10,7 @@ homepage = "https://github.com/adhikasp/agshell"
 readme = "README.md"
 keywords = ["shell", "agents", "ai", "exit-code", "supervisor"]
 categories = ["command-line-utilities", "development-tools"]
-exclude = ["mise.toml"]
+exclude = ["mise.toml", "fuzz"]
 
 [lib]
 name = "agshell"
@@ -42,6 +42,7 @@ windows-sys = { version = "0.61", features = [
 ] }
 
 [dev-dependencies]
+proptest = "1.12"
 serde_json = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 
