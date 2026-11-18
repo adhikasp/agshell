@@ -7,6 +7,8 @@ use std::io::{Read, Write};
 use std::process::{Command, Stdio};
 
 use serde_json::Value;
+#[cfg(unix)]
+use serde_json::json;
 
 const BIN: &str = env!("CARGO_BIN_EXE_agshell");
 
